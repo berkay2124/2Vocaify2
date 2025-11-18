@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import Link from "next/link";
 
 export default function Hero() {
   const [isVisible, setIsVisible] = useState(false);
@@ -58,7 +59,7 @@ export default function Hero() {
               isVisible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"
             }`}
           >
-            <button className="group relative inline-flex items-center justify-center px-8 py-4 text-lg font-semibold text-white bg-primary hover:bg-primary-700 rounded-lg shadow-lg hover:shadow-xl transition-all duration-300 transform hover:scale-105">
+            <Link href="/auth/signup" className="group relative inline-flex items-center justify-center px-8 py-4 text-lg font-semibold text-white bg-primary hover:bg-primary-700 rounded-lg shadow-lg hover:shadow-xl transition-all duration-300 transform hover:scale-105">
               <span>Start Free Trial</span>
               <svg
                 className="ml-2 w-5 h-5 group-hover:translate-x-1 transition-transform"
@@ -73,7 +74,7 @@ export default function Hero() {
                   d="M13 7l5 5m0 0l-5 5m5-5H6"
                 />
               </svg>
-            </button>
+            </Link>
             <button className="inline-flex items-center justify-center px-8 py-4 text-lg font-semibold text-gray-700 bg-white hover:bg-gray-50 rounded-lg border-2 border-gray-200 hover:border-gray-300 transition-all duration-300">
               Watch Demo
               <svg

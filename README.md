@@ -7,7 +7,10 @@ A beautiful, modern landing page for Vocaify - the AI-powered CV database search
 - **Next.js 14** with App Router
 - **TypeScript** for type safety
 - **TailwindCSS** for beautiful, responsive styling
+- **Firebase Authentication** with email/password and Google OAuth
+- **Protected routes** with middleware
 - **Smooth animations** with fade-in and slide-up effects
+- **Toast notifications** for user feedback
 - **Mobile responsive** design
 - **Production-ready** code quality
 - **SEO optimized** with proper metadata
@@ -17,6 +20,8 @@ A beautiful, modern landing page for Vocaify - the AI-powered CV database search
 - [Next.js 14](https://nextjs.org/) - React framework with App Router
 - [TypeScript](https://www.typescriptlang.org/) - Static type checking
 - [TailwindCSS](https://tailwindcss.com/) - Utility-first CSS framework
+- [Firebase](https://firebase.google.com/) - Authentication and backend services
+- [React Hot Toast](https://react-hot-toast.com/) - Toast notifications
 - [React](https://react.dev/) - UI library
 
 ## Project Structure
@@ -24,14 +29,26 @@ A beautiful, modern landing page for Vocaify - the AI-powered CV database search
 ```
 2Vocaify2/
 ├── app/
+│   ├── auth/
+│   │   ├── login/page.tsx  # Login page
+│   │   └── signup/page.tsx # Signup page
+│   ├── dashboard/          # Protected dashboard
+│   │   └── page.tsx        # Dashboard page
 │   ├── layout.tsx          # Root layout with metadata
 │   ├── page.tsx            # Landing page
 │   └── globals.css         # Global styles and Tailwind imports
 ├── components/
 │   ├── Hero.tsx            # Hero section with tagline and CTA
 │   ├── Features.tsx        # Features showcase
-│   └── CTA.tsx             # Call-to-action section
+│   ├── CTA.tsx             # Call-to-action section
+│   └── Providers.tsx       # Auth and toast providers
+├── contexts/
+│   └── AuthContext.tsx     # Firebase auth context
+├── lib/
+│   └── firebase.ts         # Firebase configuration
+├── middleware.ts           # Route protection middleware
 ├── public/                 # Static assets
+├── .env.local.example      # Environment variables template
 ├── tailwind.config.ts      # Tailwind configuration
 ├── tsconfig.json           # TypeScript configuration
 ├── next.config.mjs         # Next.js configuration
@@ -64,7 +81,43 @@ yarn install
 pnpm install
 ```
 
-3. **Run the development server**
+3. **Set up Firebase**
+
+Create a Firebase project and enable authentication:
+
+- Go to [Firebase Console](https://console.firebase.google.com/)
+- Create a new project or use an existing one
+- Enable Authentication:
+  - Go to Authentication > Sign-in method
+  - Enable "Email/Password" provider
+  - Enable "Google" provider (optional)
+- Get your Firebase configuration:
+  - Go to Project Settings > General
+  - Scroll down to "Your apps" and click the web icon (</>)
+  - Copy the configuration values
+
+4. **Configure environment variables**
+
+Create a `.env.local` file in the root directory:
+
+```bash
+cp .env.local.example .env.local
+```
+
+Update `.env.local` with your Firebase configuration:
+
+```env
+NEXT_PUBLIC_FIREBASE_API_KEY=your_api_key_here
+NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=your_project_id.firebaseapp.com
+NEXT_PUBLIC_FIREBASE_PROJECT_ID=your_project_id
+NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=your_project_id.appspot.com
+NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=your_sender_id
+NEXT_PUBLIC_FIREBASE_APP_ID=your_app_id
+```
+
+**⚠️ Important**: Never commit `.env.local` to version control. It's already included in `.gitignore`.
+
+5. **Run the development server**
 
 ```bash
 npm run dev
@@ -74,7 +127,7 @@ yarn dev
 pnpm dev
 ```
 
-4. **Open your browser**
+6. **Open your browser**
 
 Navigate to [http://localhost:3000](http://localhost:3000) to see the landing page.
 
@@ -84,6 +137,49 @@ Navigate to [http://localhost:3000](http://localhost:3000) to see the landing pa
 - `npm run build` - Build the production application
 - `npm run start` - Start the production server
 - `npm run lint` - Run ESLint for code quality
+
+## Authentication
+
+Vocaify includes a complete authentication system powered by Firebase:
+
+### Features
+
+- **Email/Password Authentication**: Traditional signup and login
+- **Google OAuth**: One-click sign in with Google
+- **Password Reset**: Forgot password flow with email
+- **Protected Routes**: Dashboard requires authentication
+- **Auth State Management**: Global auth context with React Context API
+- **Toast Notifications**: User-friendly error and success messages
+- **Form Validation**: Client-side validation for all auth forms
+- **Loading States**: Visual feedback during auth operations
+
+### Pages
+
+- **`/auth/login`**: Sign in page with email/password and Google OAuth
+- **`/auth/signup`**: Create account page with form validation
+- **`/dashboard`**: Protected dashboard page (requires authentication)
+
+### Usage
+
+```typescript
+// Use the auth context in any component
+import { useAuth } from "@/contexts/AuthContext";
+
+function MyComponent() {
+  const { user, signIn, signUp, logout } = useAuth();
+
+  // user will be null if not authenticated
+  // user will be a Firebase User object if authenticated
+}
+```
+
+### Security Notes
+
+- All authentication is handled securely by Firebase
+- Environment variables are prefixed with `NEXT_PUBLIC_` for client-side access
+- Protected routes redirect to login if user is not authenticated
+- Tokens are managed automatically by Firebase SDK
+- Never commit `.env.local` to version control
 
 ## Design Highlights
 

@@ -1,6 +1,7 @@
 import Hero from "@/components/Hero";
 import Features from "@/components/Features";
 import CTA from "@/components/CTA";
+import Link from "next/link";
 
 export default function Home() {
   return (
@@ -27,9 +28,9 @@ export default function Home() {
               <a href="#about" className="text-gray-600 hover:text-primary-600 transition-colors font-medium">
                 About
               </a>
-              <button className="px-5 py-2 text-sm font-semibold text-white bg-primary hover:bg-primary-700 rounded-lg transition-colors">
+              <Link href="/auth/login" className="px-5 py-2 text-sm font-semibold text-white bg-primary hover:bg-primary-700 rounded-lg transition-colors">
                 Sign In
-              </button>
+              </Link>
             </div>
 
             {/* Mobile menu button */}
