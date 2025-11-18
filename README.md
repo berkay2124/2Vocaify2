@@ -30,29 +30,35 @@ A beautiful, modern landing page for Vocaify - the AI-powered CV database search
 2Vocaify2/
 ├── app/
 │   ├── auth/
-│   │   ├── login/page.tsx  # Login page
-│   │   └── signup/page.tsx # Signup page
-│   ├── dashboard/          # Protected dashboard
-│   │   └── page.tsx        # Dashboard page
-│   ├── layout.tsx          # Root layout with metadata
-│   ├── page.tsx            # Landing page
-│   └── globals.css         # Global styles and Tailwind imports
+│   │   ├── login/page.tsx     # Login page
+│   │   └── signup/page.tsx    # Signup page
+│   ├── dashboard/             # Protected dashboard
+│   │   ├── page.tsx           # Dashboard home
+│   │   └── upload/page.tsx    # CV upload page
+│   ├── layout.tsx             # Root layout with metadata
+│   ├── page.tsx               # Landing page
+│   └── globals.css            # Global styles and Tailwind imports
 ├── components/
-│   ├── Hero.tsx            # Hero section with tagline and CTA
-│   ├── Features.tsx        # Features showcase
-│   ├── CTA.tsx             # Call-to-action section
-│   └── Providers.tsx       # Auth and toast providers
+│   ├── Hero.tsx               # Hero section with tagline and CTA
+│   ├── Features.tsx           # Features showcase
+│   ├── CTA.tsx                # Call-to-action section
+│   ├── CVUpload.tsx           # Drag & drop upload component
+│   └── Providers.tsx          # Auth and toast providers
 ├── contexts/
-│   └── AuthContext.tsx     # Firebase auth context
+│   └── AuthContext.tsx        # Firebase auth context
 ├── lib/
-│   └── firebase.ts         # Firebase configuration
-├── middleware.ts           # Route protection middleware
-├── public/                 # Static assets
-├── .env.local.example      # Environment variables template
-├── tailwind.config.ts      # Tailwind configuration
-├── tsconfig.json           # TypeScript configuration
-├── next.config.mjs         # Next.js configuration
-└── package.json            # Dependencies and scripts
+│   ├── firebase.ts            # Firebase configuration
+│   ├── storage.ts             # Firebase Storage helpers
+│   └── firestore.ts           # Firestore helpers
+├── middleware.ts              # Route protection middleware
+├── firestore.rules            # Firestore security rules
+├── storage.rules              # Storage security rules
+├── public/                    # Static assets
+├── .env.local.example         # Environment variables template
+├── tailwind.config.ts         # Tailwind configuration
+├── tsconfig.json              # TypeScript configuration
+├── next.config.mjs            # Next.js configuration
+└── package.json               # Dependencies and scripts
 ```
 
 ## Getting Started
@@ -83,15 +89,29 @@ pnpm install
 
 3. **Set up Firebase**
 
-Create a Firebase project and enable authentication:
+Create a Firebase project and enable required services:
 
 - Go to [Firebase Console](https://console.firebase.google.com/)
 - Create a new project or use an existing one
-- Enable Authentication:
+- **Enable Authentication:**
   - Go to Authentication > Sign-in method
   - Enable "Email/Password" provider
   - Enable "Google" provider (optional)
-- Get your Firebase configuration:
+- **Enable Firestore Database:**
+  - Go to Firestore Database
+  - Click "Create database"
+  - Choose production mode (or test mode for development)
+  - Select a region closest to your users
+- **Enable Storage:**
+  - Go to Storage
+  - Click "Get started"
+  - Use production mode
+  - Select the same region as Firestore
+- **Deploy Security Rules:**
+  - For Firestore: Copy contents of `firestore.rules` to Firestore Rules tab
+  - For Storage: Copy contents of `storage.rules` to Storage Rules tab
+  - Click "Publish" for both
+- **Get your Firebase configuration:**
   - Go to Project Settings > General
   - Scroll down to "Your apps" and click the web icon (</>)
   - Copy the configuration values
@@ -180,6 +200,90 @@ function MyComponent() {
 - Protected routes redirect to login if user is not authenticated
 - Tokens are managed automatically by Firebase SDK
 - Never commit `.env.local` to version control
+
+## CV Upload System
+
+Vocaify includes a comprehensive CV upload system with Firebase Storage and Firestore:
+
+### Features
+
+- **Drag & Drop Interface**: Beautiful, intuitive file upload UI
+- **Bulk Upload**: Upload up to 1000 CVs at once
+- **File Validation**: Automatic validation for file type (PDF, DOCX) and size (10MB max)
+- **Progress Tracking**: Real-time progress bars for each file and overall batch
+- **Batch Processing**: Processes 10 files at a time to avoid rate limits
+- **Error Handling**: Retry failed uploads and clear error messages
+- **Duplicate Detection**: Prevents uploading the same file twice
+- **Resume Upload**: Continue from where you left off after interruptions
+
+### Architecture
+
+**Firebase Storage Structure:**
+```
+/cvs/{userId}/{timestamp}_{filename}
+```
+
+**Firestore Collection:**
+```typescript
+Collection: "cvs"
+Document: {
+  userId: string
+  storagePath: string
+  filename: string
+  uploadedAt: Timestamp
+  status: "pending" | "processing" | "indexed" | "error"
+  fileSize: number
+  fileType: string
+  downloadURL: string
+  errorMessage?: string
+}
+```
+
+### Pages
+
+- **`/dashboard`**: Shows CV count and upload CTA
+- **`/dashboard/upload`**: Full upload interface with drag & drop
+
+### Security Rules
+
+The project includes production-ready security rules:
+
+- **Firestore Rules** (`firestore.rules`): Users can only access their own CV documents
+- **Storage Rules** (`storage.rules`): Users can only upload to their own folder, with file type and size validation
+
+### Usage
+
+```typescript
+// Upload a CV
+import { uploadCV } from "@/lib/storage";
+import { createCVDocument } from "@/lib/firestore";
+
+const { storagePath, downloadURL } = await uploadCV(
+  file,
+  userId,
+  (progress) => console.log(progress)
+);
+
+await createCVDocument({
+  userId,
+  storagePath,
+  filename: file.name,
+  uploadedAt: Timestamp.now(),
+  status: "pending",
+  fileSize: file.size,
+  fileType: file.type,
+  downloadURL,
+});
+```
+
+### Edge Cases Handled
+
+- Duplicate filenames (adds timestamp prefix)
+- Large batch uploads (100+ files)
+- Network interruptions (shows error state, allows retry)
+- File size limits (10MB per file)
+- Invalid file types (only PDF and DOCX allowed)
+- Memory management (no file content stored in state)
 
 ## Design Highlights
 

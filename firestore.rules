@@ -1,0 +1,31 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // CVs collection - users can only read/write their own CVs
+    match /cvs/{cvId} {
+      // Allow read if the user owns the CV
+      allow read: if request.auth != null &&
+                     resource.data.userId == request.auth.uid;
+
+      // Allow create if the user is authenticated and sets themselves as the owner
+      allow create: if request.auth != null &&
+                       request.resource.data.userId == request.auth.uid &&
+                       request.resource.data.keys().hasAll(['userId', 'storagePath', 'filename', 'uploadedAt', 'status', 'fileSize', 'fileType']);
+
+      // Allow update if the user owns the CV
+      // Only allow updating specific fields (prevent changing userId)
+      allow update: if request.auth != null &&
+                       resource.data.userId == request.auth.uid &&
+                       request.resource.data.userId == resource.data.userId;
+
+      // Allow delete if the user owns the CV
+      allow delete: if request.auth != null &&
+                       resource.data.userId == request.auth.uid;
+    }
+
+    // Deny all other access
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -3,17 +3,38 @@
 import { useAuth } from "@/contexts/AuthContext";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import Link from "next/link";
+import { getUserCVCount } from "@/lib/firestore";
 
 export default function DashboardPage() {
   const { user, logout, loading } = useAuth();
   const router = useRouter();
   const [loggingOut, setLoggingOut] = useState(false);
+  const [cvCount, setCvCount] = useState<number>(0);
+  const [loadingCount, setLoadingCount] = useState(true);
 
   useEffect(() => {
     if (!loading && !user) {
       router.push("/auth/login");
     }
   }, [user, loading, router]);
+
+  useEffect(() => {
+    async function fetchCVCount() {
+      if (user) {
+        try {
+          const count = await getUserCVCount(user.uid);
+          setCvCount(count);
+        } catch (error) {
+          console.error("Error fetching CV count:", error);
+        } finally {
+          setLoadingCount(false);
+        }
+      }
+    }
+
+    fetchCVCount();
+  }, [user]);
 
   const handleLogout = async () => {
     setLoggingOut(true);
@@ -46,11 +67,27 @@ export default function DashboardPage() {
       <nav className="bg-white border-b border-gray-200 shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
-            {/* Logo */}
-            <div className="flex items-center">
-              <span className="text-2xl font-bold bg-gradient-to-r from-primary-600 to-indigo-600 bg-clip-text text-transparent">
-                Vocaify
-              </span>
+            {/* Logo & Nav Links */}
+            <div className="flex items-center gap-8">
+              <Link href="/dashboard">
+                <span className="text-2xl font-bold bg-gradient-to-r from-primary-600 to-indigo-600 bg-clip-text text-transparent cursor-pointer">
+                  Vocaify
+                </span>
+              </Link>
+              <div className="hidden md:flex items-center gap-6">
+                <Link
+                  href="/dashboard"
+                  className="text-sm font-semibold text-primary-600"
+                >
+                  Dashboard
+                </Link>
+                <Link
+                  href="/dashboard/upload"
+                  className="text-sm font-medium text-gray-600 hover:text-gray-900 transition-colors"
+                >
+                  Upload
+                </Link>
+              </div>
             </div>
 
             {/* User Menu */}
@@ -111,7 +148,13 @@ export default function DashboardPage() {
                 </svg>
               </div>
             </div>
-            <h3 className="text-2xl font-bold text-gray-900 mb-1">0</h3>
+            <h3 className="text-2xl font-bold text-gray-900 mb-1">
+              {loadingCount ? (
+                <span className="inline-block animate-pulse">...</span>
+              ) : (
+                cvCount
+              )}
+            </h3>
             <p className="text-gray-600 text-sm">CVs Uploaded</p>
           </div>
 
@@ -210,9 +253,12 @@ export default function DashboardPage() {
                   Upload your first batch of CVs and experience the power of AI-driven search.
                 </p>
               </div>
-              <button className="px-6 py-3 bg-primary hover:bg-primary-700 text-white font-semibold rounded-lg transition-all transform hover:scale-105 shadow-lg">
+              <Link
+                href="/dashboard/upload"
+                className="px-6 py-3 bg-primary hover:bg-primary-700 text-white font-semibold rounded-lg transition-all transform hover:scale-105 shadow-lg inline-block"
+              >
                 Upload CVs
-              </button>
+              </Link>
             </div>
           </div>
         </div>

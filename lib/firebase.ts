@@ -1,5 +1,7 @@
 import { initializeApp, getApps, getApp, FirebaseApp } from "firebase/app";
 import { getAuth, Auth } from "firebase/auth";
+import { getStorage, FirebaseStorage } from "firebase/storage";
+import { getFirestore, Firestore } from "firebase/firestore";
 
 // Firebase configuration
 // Use placeholder values during build if environment variables are not set
@@ -15,16 +17,22 @@ const firebaseConfig = {
 // Initialize Firebase
 let app: FirebaseApp;
 let auth: Auth;
+let storage: FirebaseStorage;
+let db: Firestore;
 
 try {
   app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
   auth = getAuth(app);
+  storage = getStorage(app);
+  db = getFirestore(app);
 } catch (error) {
   // During build time, Firebase might fail to initialize with placeholder values
   // This is expected and will work properly once real environment variables are provided
   console.warn("Firebase initialization warning:", error);
   app = getApps()[0] || ({} as FirebaseApp);
   auth = {} as Auth;
+  storage = {} as FirebaseStorage;
+  db = {} as Firestore;
 }
 
-export { app, auth };
+export { app, auth, storage, db };
