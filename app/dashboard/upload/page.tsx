@@ -196,6 +196,12 @@ export default function UploadPage() {
                 >
                   Upload
                 </Link>
+                <Link
+                  href="/dashboard/search"
+                  className="text-sm font-medium text-gray-600 hover:text-gray-900 transition-colors"
+                >
+                  Search
+                </Link>
               </div>
             </div>
 

@@ -87,6 +87,12 @@ export default function DashboardPage() {
                 >
                   Upload
                 </Link>
+                <Link
+                  href="/dashboard/search"
+                  className="text-sm font-medium text-gray-600 hover:text-gray-900 transition-colors"
+                >
+                  Search
+                </Link>
               </div>
             </div>
 
@@ -245,20 +251,39 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          <div className="mt-8 p-6 bg-gradient-to-r from-primary-50 to-indigo-50 rounded-xl">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="font-semibold text-gray-900 mb-1">Ready to start searching?</h3>
-                <p className="text-gray-600 text-sm">
-                  Upload your first batch of CVs and experience the power of AI-driven search.
-                </p>
+          <div className="mt-8 grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="p-6 bg-gradient-to-r from-primary-50 to-indigo-50 rounded-xl">
+              <div className="flex flex-col h-full justify-between">
+                <div>
+                  <h3 className="font-semibold text-gray-900 mb-1">Ready to start searching?</h3>
+                  <p className="text-gray-600 text-sm">
+                    Upload your first batch of CVs and experience the power of AI-driven search.
+                  </p>
+                </div>
+                <Link
+                  href="/dashboard/upload"
+                  className="mt-4 px-6 py-3 bg-primary hover:bg-primary-700 text-white font-semibold rounded-lg transition-all transform hover:scale-105 shadow-lg inline-block text-center"
+                >
+                  Upload CVs
+                </Link>
               </div>
-              <Link
-                href="/dashboard/upload"
-                className="px-6 py-3 bg-primary hover:bg-primary-700 text-white font-semibold rounded-lg transition-all transform hover:scale-105 shadow-lg inline-block"
-              >
-                Upload CVs
-              </Link>
+            </div>
+
+            <div className="p-6 bg-gradient-to-r from-indigo-50 to-purple-50 rounded-xl">
+              <div className="flex flex-col h-full justify-between">
+                <div>
+                  <h3 className="font-semibold text-gray-900 mb-1">Try the search interface</h3>
+                  <p className="text-gray-600 text-sm">
+                    Explore our powerful search with mock data and see how natural language queries work.
+                  </p>
+                </div>
+                <Link
+                  href="/dashboard/search"
+                  className="mt-4 px-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg transition-all transform hover:scale-105 shadow-lg inline-block text-center"
+                >
+                  Try Search
+                </Link>
+              </div>
             </div>
           </div>
         </div>
