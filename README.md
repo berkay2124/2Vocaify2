@@ -509,6 +509,302 @@ After deploying Cloud Functions:
 4. View extracted data in CV documents
 5. Test search functionality with processed CVs
 
+## Semantic Search with Vector Embeddings
+
+Vocaify implements advanced semantic search using OpenAI embeddings and Pinecone vector database for lightning-fast, accurate CV matching.
+
+### Architecture
+
+**Vector Search Pipeline:**
+1. **CV Processing**: After extracting data with OpenAI, generate 1536-dimension embedding
+2. **Storage**: Store embedding in Pinecone with metadata (skills, experience, location)
+3. **Search**: Convert user query to embedding, find similar CVs in Pinecone
+4. **Filtering**: Apply metadata filters (experience range, skills, location)
+5. **Re-ranking**: Use GPT-4o-mini to re-rank top 20 candidates for relevance
+
+### Setup Instructions
+
+**1. Create Pinecone Index**
+
+Sign up at [pinecone.io](https://app.pinecone.io/) and create a new index:
+
+```bash
+Name: vocaify-cvs
+Dimensions: 1536
+Metric: cosine
+Cloud: AWS (or your preference)
+Region: us-east-1 (or nearest to you)
+```
+
+**2. Configure API Keys**
+
+Copy `.env.local.example` to `.env.local` and add your keys:
+
+```bash
+cp .env.local.example .env.local
+```
+
+Edit `.env.local`:
+```env
+PINECONE_API_KEY=your_pinecone_api_key
+OPENAI_API_KEY=your_openai_api_key
+```
+
+**3. Configure Cloud Functions**
+
+Set the Pinecone key for Cloud Functions:
+
+```bash
+firebase functions:config:set pinecone.key="YOUR_PINECONE_API_KEY"
+```
+
+Verify:
+```bash
+firebase functions:config:get
+# Should show both openai.key and pinecone.key
+```
+
+**4. Deploy Updated Functions**
+
+```bash
+firebase deploy --only functions
+```
+
+### How It Works
+
+**Embedding Generation:**
+- Model: `text-embedding-3-small` (1536 dimensions)
+- Input: Combined text from name, skills, experience, summary, work history
+- Cost: ~$0.00002 per CV (~$0.02 per 1000 CVs)
+- Speed: ~200ms per embedding
+
+**Vector Search:**
+- Pinecone cosine similarity search
+- Sub-100ms query time
+- Supports metadata filtering for experience, location
+- Returns top 50 similar CVs
+
+**Post-Processing:**
+- Apply complex filters (e.g., required skills array matching)
+- Take top 20 candidates
+
+**GPT-4 Re-ranking:**
+- Send top 20 to GPT-4o-mini for intelligent re-ranking
+- Provides match score (0-100) and reasoning
+- Returns top 10 with explanations
+- Cost: ~$0.001 per search
+- Speed: ~1-2 seconds
+
+### Search API
+
+**Endpoint:** `POST /api/search`
+
+**Request:**
+```typescript
+{
+  "query": "Senior React developer with 5+ years",
+  "userId": "user123",
+  "filters": {
+    "minExperience": 5,
+    "maxExperience": 15,
+    "skills": ["React", "TypeScript"],
+    "location": "San Francisco"
+  },
+  "topK": 50,
+  "rerank": true
+}
+```
+
+**Response:**
+```typescript
+{
+  "success": true,
+  "results": [
+    {
+      "id": "cv_abc123",
+      "score": 0.89,
+      "metadata": {
+        "name": "John Doe",
+        "yearsExperience": 7,
+        "skills": ["React", "TypeScript", "Node.js"],
+        "location": "San Francisco"
+      },
+      "rerankScore": 95,
+      "rerankReasoning": "Strong React and TypeScript experience with proven track record"
+    }
+  ],
+  "totalResults": 23,
+  "duration": 1432,
+  "reranked": true
+}
+```
+
+### Client-Side Usage
+
+**Using the Vector Search Utility:**
+
+```typescript
+import { performVectorSearch } from "@/lib/vectorSearch";
+
+// Perform search
+const results = await performVectorSearch({
+  query: "Python developer with ML experience",
+  userId: user.uid,
+  filters: {
+    minExperience: 3,
+    skills: ["Python", "TensorFlow"],
+  },
+  topK: 50,
+  rerank: true,
+});
+
+console.log(`Found ${results.totalResults} candidates in ${results.duration}ms`);
+results.results.forEach((result) => {
+  console.log(`${result.metadata.name}: ${result.rerankScore}/100`);
+  console.log(`Reason: ${result.rerankReasoning}`);
+});
+```
+
+**Check Search Service Health:**
+
+```typescript
+import { checkSearchHealth } from "@/lib/vectorSearch";
+
+const health = await checkSearchHealth();
+console.log(`Index has ${health.vectorCount} vectors`);
+```
+
+### Features
+
+**Intelligent Filtering:**
+- Experience range (min/max years)
+- Required skills (array matching)
+- Location filtering
+- User-scoped search (security)
+
+**Natural Language Understanding:**
+- "5+ years React experience" → extracts skills and experience
+- "Senior Python ML engineer" → identifies seniority, language, domain
+- "Full-stack developer San Francisco" → location extraction
+
+**Result Re-ranking:**
+- AI-powered relevance scoring
+- Explanation for each match
+- Considers context beyond keyword matching
+- Balances vector similarity with domain expertise
+
+**Performance Optimization:**
+- Client-side result caching (5 min TTL)
+- Pinecone metadata filtering (pre-filters in vector DB)
+- Post-search filtering for complex queries
+- Lazy re-ranking (only when needed)
+
+### Cost Breakdown
+
+**Per CV Processing:**
+- Text extraction: Free (pdf-parse, mammoth)
+- OpenAI extraction: ~$0.002 (GPT-4o-mini)
+- Embedding generation: ~$0.00002 (text-embedding-3-small)
+- Pinecone storage: ~$0.000001 per month
+- **Total per CV: ~$0.002**
+
+**Per Search:**
+- Query embedding: ~$0.00002
+- Pinecone search: Free (generous free tier)
+- GPT-4 re-ranking: ~$0.001 (optional)
+- **Total per search: ~$0.001**
+
+**1000 CVs + 1000 searches/month:**
+- CV processing: $2
+- Search queries: $1
+- Pinecone: Free tier (includes 100K vectors)
+- **Total: ~$3/month**
+
+### Monitoring
+
+**View Search Logs:**
+
+```bash
+# Next.js API logs (local dev)
+npm run dev
+# Check console for search logs
+
+# Production logs (Vercel)
+vercel logs
+```
+
+**Check Pinecone Stats:**
+
+```bash
+curl https://YOUR_DOMAIN/api/search
+```
+
+Response:
+```json
+{
+  "status": "healthy",
+  "index": "vocaify-cvs",
+  "vectorCount": 1523,
+  "dimension": 1536
+}
+```
+
+**Monitor Search Performance:**
+
+All searches log:
+- Query text
+- Number of results
+- Duration (ms)
+- Whether re-ranking was used
+- Filter criteria
+
+### Troubleshooting
+
+**"PINECONE_API_KEY environment variable not set":**
+- Ensure `.env.local` exists with `PINECONE_API_KEY=...`
+- Restart Next.js dev server after adding env vars
+
+**"Failed to upsert to Pinecone" in Cloud Functions:**
+- Run: `firebase functions:config:set pinecone.key="YOUR_KEY"`
+- Redeploy: `firebase deploy --only functions`
+
+**Search returns 0 results:**
+- Ensure CVs have been processed (check Firestore `embeddingGenerated: true`)
+- Verify Pinecone index name is "vocaify-cvs"
+- Check Pinecone dashboard for vector count
+
+**Slow search times (>3 seconds):**
+- Disable re-ranking for faster results: `rerank: false`
+- Reduce `topK` to 20-30
+- Check Pinecone region (use nearest region)
+
+**Re-ranking fails:**
+- Falls back to vector scores automatically
+- Check OpenAI API quota and limits
+- Review logs for GPT-4 errors
+
+### Best Practices
+
+**Query Optimization:**
+- Use natural language: "Senior React developer 5 years TypeScript"
+- Be specific: "ML engineer Python TensorFlow 3+ years"
+- Avoid too many filters (reduces result set)
+
+**Filter Strategy:**
+- Use vector search for semantic matching
+- Use filters for hard requirements (e.g., location, min experience)
+- Combine both for best results
+
+**Re-ranking:**
+- Enable for important searches (hiring managers)
+- Disable for bulk operations (cost savings)
+- Use cached results when possible
+
+**Scaling:**
+- Pinecone free tier: 100K vectors (100K CVs)
+- Paid tier: Millions of vectors with better performance
+- Consider result caching in Redis for high traffic
+
 ## Design Highlights
 
 ### Color Scheme

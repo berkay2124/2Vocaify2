@@ -2,6 +2,8 @@ import * as functions from "firebase-functions";
 import * as admin from "firebase-admin";
 import { extractTextFromCV, validateFileSize } from "./extractText";
 import { extractCVDataWithAI } from "./openai";
+import { generateSearchableText, generateEmbedding } from "./generateEmbedding";
+import { upsertCVEmbedding, CVMetadata } from "./pinecone";
 
 /**
  * Retry configuration
@@ -128,13 +130,50 @@ export async function processSingleCV(
       candidateName: extractedData.name,
     });
 
+    // Generate searchable text for embedding
+    const searchableText = generateSearchableText(extractedData);
+
+    functions.logger.info("Generated searchable text", {
+      textLength: searchableText.length,
+    });
+
+    // Generate embedding with retry
+    const embedding = await withRetry(async () => {
+      return generateEmbedding(searchableText);
+    });
+
+    functions.logger.info("Embedding generation completed", {
+      dimensions: embedding.length,
+    });
+
+    // Upsert to Pinecone with retry
+    const cvDocId = cvDoc.id;
+    const metadata: CVMetadata = {
+      userId,
+      name: extractedData.name,
+      yearsExperience: extractedData.yearsExperience,
+      skills: extractedData.skills,
+      location: cvDoc.data()?.location || "",
+      firestoreDocId: cvDocId,
+      email: extractedData.email,
+      phone: extractedData.phone,
+    };
+
+    await withRetry(async () => {
+      return upsertCVEmbedding(cvDocId, embedding, metadata);
+    });
+
+    functions.logger.info("Pinecone upsert completed", {
+      cvDocId,
+    });
+
     // Update Firestore document with extracted data
     await cvDocRef.update({
       status: "indexed",
       extractedData: extractedData,
       extractedText: extractedText.substring(0, 5000), // Store first 5000 chars
       processedAt: admin.firestore.FieldValue.serverTimestamp(),
-      embedding: null, // Will be populated in Phase 6
+      embeddingGenerated: true,
       errorMessage: admin.firestore.FieldValue.delete(),
     });
 
