@@ -16,31 +16,36 @@ export interface UploadProgress {
 }
 
 /**
- * Upload a CV file to Firebase Storage
+ * Upload a CV file to Firebase Storage with multi-tenant support
  * @param file - The file to upload
  * @param userId - The authenticated user's ID
+ * @param organizationId - The user's organization ID
  * @param onProgress - Callback for upload progress updates
  * @returns Promise resolving to the storage path and download URL
  */
 export async function uploadCV(
   file: File,
   userId: string,
+  organizationId: string,
   onProgress?: (progress: UploadProgress) => void
 ): Promise<{ storagePath: string; downloadURL: string }> {
   // Generate unique filename with timestamp
   const timestamp = Date.now();
   const sanitizedFilename = file.name.replace(/[^a-zA-Z0-9.-]/g, "_");
   const filename = `${timestamp}_${sanitizedFilename}`;
-  const storagePath = `cvs/${userId}/${filename}`;
+
+  // Multi-tenant path structure: /cvs/{orgId}/{userId}/{filename}
+  const storagePath = `cvs/${organizationId}/${userId}/${filename}`;
 
   // Create storage reference
   const storageRef = ref(storage, storagePath);
 
-  // Create upload task with metadata
+  // Create upload task with metadata (required by storage rules)
   const metadata = {
     contentType: file.type,
     customMetadata: {
-      userId,
+      organizationId, // Required by storage rules
+      uploadedBy: userId, // Required by storage rules
       uploadedAt: new Date().toISOString(),
       originalFilename: file.name,
       fileSize: file.size.toString(),

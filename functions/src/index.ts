@@ -1,9 +1,40 @@
 import * as functions from "firebase-functions";
 import * as admin from "firebase-admin";
 import { processSingleCV } from "./processCv";
+import {
+  processInvitation,
+  cleanupExpiredInvitations,
+  acceptInvitation,
+} from "./inviteUser";
 
 // Initialize Firebase Admin
 admin.initializeApp();
+
+// ============================================================================
+// TEAM INVITATION FUNCTIONS (MULTI-TENANT RBAC)
+// ============================================================================
+
+/**
+ * Process new team invitations
+ * Triggered when invitation document is created
+ */
+export const onInvitationCreated = processInvitation;
+
+/**
+ * Clean up expired invitations
+ * Runs daily via Cloud Scheduler
+ */
+export const dailyInvitationCleanup = cleanupExpiredInvitations;
+
+/**
+ * Accept team invitation
+ * Called via HTTP from client
+ */
+export const acceptTeamInvitation = acceptInvitation;
+
+// ============================================================================
+// CV PROCESSING FUNCTIONS
+// ============================================================================
 
 /**
  * Cloud Function triggered when a CV is uploaded to Firebase Storage

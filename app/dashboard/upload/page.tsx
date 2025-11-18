@@ -53,10 +53,11 @@ export default function UploadPage() {
     if (!user || !userProfile?.organizationId) return false;
 
     try {
-      // Upload to Storage
+      // Upload to Storage with multi-tenant path
       const { storagePath, downloadURL } = await uploadCV(
         fileWithStatus.file,
         user.uid,
+        userProfile.organizationId,
         (progress) => updateFileProgress(fileWithStatus.id, progress)
       );
 

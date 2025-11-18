@@ -1,54 +1,228 @@
 rules_version = '2';
+
+/**
+ * Firebase Storage Security Rules - Multi-Tenant RBAC
+ *
+ * Path Structure: /cvs/{orgId}/{userId}/{filename}
+ *
+ * Security Model:
+ * - Strict organization isolation: Users can only access files in their organization
+ * - Role-based upload permissions: Only admins and managers can upload
+ * - Read access: All organization members can read CVs
+ * - Delete permissions: Only admins and managers can delete
+ * - Cross-organization access: BLOCKED at storage level
+ *
+ * CRITICAL: All operations require valid organizationId match
+ */
+
 service firebase.storage {
   match /b/{bucket}/o {
 
-    // Helper functions for validation
+    // ============================================================================
+    // HELPER FUNCTIONS
+    // ============================================================================
+
+    /**
+     * Check if user is authenticated
+     */
     function isAuthenticated() {
       return request.auth != null;
     }
 
-    function isOwner(userId) {
-      return isAuthenticated() && request.auth.uid == userId;
+    /**
+     * Get user profile from Firestore
+     */
+    function getUserProfile() {
+      return firestore.get(/databases/(default)/documents/userProfiles/$(request.auth.uid)).data;
     }
 
-    function isValidFileSize(size) {
-      // Minimum 100 bytes, maximum 10MB
-      return size >= 100 && size < 10 * 1024 * 1024;
+    /**
+     * Get user's organization ID
+     */
+    function getUserOrg() {
+      return getUserProfile().organizationId;
     }
 
-    function isValidContentType(contentType) {
-      return contentType in [
-        'application/pdf',
-        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        'application/msword'
-      ];
+    /**
+     * Get user's role
+     */
+    function getUserRole() {
+      return getUserProfile().role;
     }
 
-    function hasValidMetadata() {
-      // Ensure no malicious metadata
+    /**
+     * Check if user is in the same organization as the resource
+     */
+    function isSameOrg(orgId) {
+      return isAuthenticated() && getUserOrg() == orgId;
+    }
+
+    /**
+     * Check if user is admin
+     */
+    function isAdmin() {
+      return isAuthenticated() && getUserRole() == 'admin';
+    }
+
+    /**
+     * Check if user is manager
+     */
+    function isManager() {
+      return isAuthenticated() && getUserRole() == 'manager';
+    }
+
+    /**
+     * Check if user can upload CVs (admin or manager)
+     */
+    function canUpload() {
+      return isAdmin() || isManager();
+    }
+
+    /**
+     * Check if user can delete CVs (admin or manager)
+     */
+    function canDelete() {
+      return isAdmin() || isManager();
+    }
+
+    /**
+     * Validate file type (PDF or DOCX only)
+     */
+    function isValidFileType() {
+      return request.resource.contentType.matches('application/pdf') ||
+             request.resource.contentType.matches('application/vnd.openxmlformats-officedocument.wordprocessingml.document') ||
+             request.resource.contentType.matches('application/msword');
+    }
+
+    /**
+     * Validate file size (max 10MB)
+     */
+    function isValidFileSize() {
+      return request.resource.size <= 10 * 1024 * 1024; // 10MB
+    }
+
+    /**
+     * Validate metadata contains required fields
+     */
+    function hasRequiredMetadata() {
+      return request.resource.metadata != null &&
+             request.resource.metadata.uploadedBy != null &&
+             request.resource.metadata.organizationId != null;
+    }
+
+    /**
+     * Validate metadata security (no prototype pollution)
+     */
+    function hasSecureMetadata() {
       return !request.resource.metadata.keys().hasAny(['__proto__', 'constructor', 'prototype']);
     }
 
-    // CVs folder structure: cvs/{userId}/{filename}
-    match /cvs/{userId}/{filename} {
-      // Allow read if the user owns the file
-      allow read: if isOwner(userId);
-
-      // Allow write (create/update) with strict validation
-      allow write: if isOwner(userId) &&
-                      isValidFileSize(request.resource.size) &&
-                      isValidContentType(request.resource.contentType) &&
-                      hasValidMetadata() &&
-                      // Filename validation: no path traversal
-                      !filename.matches('.*[/\\\\].*') &&
-                      // Filename length: 1-255 characters
-                      filename.size() >= 1 && filename.size() <= 255;
-
-      // Allow delete if the user owns the file
-      allow delete: if isOwner(userId);
+    /**
+     * Validate filename (no path traversal, proper length)
+     */
+    function isValidFilename(filename) {
+      return !filename.matches('.*[/\\\\].*') &&
+             filename.size() >= 1 &&
+             filename.size() <= 255;
     }
 
-    // Deny all other access
+    // ============================================================================
+    // CV FILES - MULTI-TENANT STRUCTURE
+    // ============================================================================
+
+    /**
+     * CV Files: /cvs/{orgId}/{userId}/{filename}
+     *
+     * Security:
+     * - Organization isolation: orgId must match user's organization
+     * - Upload: Admin or Manager only
+     * - Read: All members of the organization
+     * - Delete: Admin or Manager only
+     * - File validation: PDF/DOCX, max 10MB
+     * - Metadata required: uploadedBy, organizationId
+     */
+    match /cvs/{orgId}/{userId}/{filename} {
+
+      // READ: Anyone in the same organization can read
+      allow read: if isSameOrg(orgId);
+
+      // CREATE: Admin or Manager, same org, valid file
+      allow create: if isSameOrg(orgId) &&
+                       canUpload() &&
+                       isValidFileType() &&
+                       isValidFileSize() &&
+                       hasRequiredMetadata() &&
+                       hasSecureMetadata() &&
+                       isValidFilename(filename) &&
+                       request.resource.metadata.organizationId == orgId &&
+                       request.resource.metadata.uploadedBy == request.auth.uid;
+
+      // UPDATE: Admin or Manager, same org only (for metadata updates)
+      allow update: if isSameOrg(orgId) &&
+                       canUpload() &&
+                       resource.metadata.organizationId == orgId;
+
+      // DELETE: Admin or Manager, same org only
+      allow delete: if isSameOrg(orgId) &&
+                       canDelete() &&
+                       resource.metadata.organizationId == orgId;
+    }
+
+    // ============================================================================
+    // TEMP UPLOADS - FOR PROCESSING
+    // ============================================================================
+
+    /**
+     * Temporary upload directory for processing
+     * Allows users to upload files temporarily before moving to final location
+     */
+    match /temp/{userId}/{filename} {
+      allow read, write: if isAuthenticated() &&
+                           request.auth.uid == userId &&
+                           isValidFileType() &&
+                           isValidFileSize() &&
+                           isValidFilename(filename);
+    }
+
+    // ============================================================================
+    // PROFILE IMAGES (OPTIONAL - FOR FUTURE)
+    // ============================================================================
+
+    /**
+     * User profile images: /profiles/{userId}/{filename}
+     */
+    match /profiles/{userId}/{filename} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() &&
+                      request.auth.uid == userId &&
+                      request.resource.size <= 5 * 1024 * 1024 && // 5MB
+                      request.resource.contentType.matches('image/.*') &&
+                      isValidFilename(filename);
+    }
+
+    // ============================================================================
+    // ORGANIZATION ASSETS (OPTIONAL - FOR FUTURE)
+    // ============================================================================
+
+    /**
+     * Organization logos and assets: /organizations/{orgId}/{filename}
+     */
+    match /organizations/{orgId}/{filename} {
+      allow read: if isSameOrg(orgId);
+      allow write: if isSameOrg(orgId) &&
+                      isAdmin() &&
+                      request.resource.size <= 2 * 1024 * 1024 && // 2MB
+                      isValidFilename(filename);
+    }
+
+    // ============================================================================
+    // DENY ALL OTHER PATHS
+    // ============================================================================
+
+    /**
+     * Deny access to all other paths by default
+     * This is a security best practice - explicit deny
+     */
     match /{allPaths=**} {
       allow read, write: if false;
     }
@@ -56,62 +230,57 @@ service firebase.storage {
 }
 
 /**
- * PRODUCTION SECURITY NOTES:
+ * DEPLOYMENT NOTES:
  *
- * 1. RATE LIMITING:
- *    Firebase Storage rules don't support rate limiting directly.
- *    Implement rate limiting at the application level using:
- *    - Cloud Functions with Firestore counters
- *    - Firebase App Check to prevent abuse
- *    - Cloud Armor (if using Cloud CDN)
+ * 1. Deploy with: firebase deploy --only storage
  *
- * 2. USER QUOTAS:
- *    Enforce storage quotas per user in your application:
- *    - Track total storage per user in Firestore
- *    - Check quota before allowing uploads
- *    - Implement cleanup for abandoned uploads
+ * 2. Update upload logic to include metadata:
+ *    - uploadedBy: user.uid
+ *    - organizationId: userProfile.organizationId
+ *    - uploadedAt: timestamp
  *
- * 3. FILE VALIDATION:
- *    These rules validate:
- *    ✓ File size (100 bytes - 10MB)
- *    ✓ Content type (PDF, DOCX, DOC only)
- *    ✓ Filename (no path traversal, length limits)
- *    ✓ Metadata (no prototype pollution)
- *    ✓ User ownership
+ * 3. Update storage path in upload functions to match:
+ *    /cvs/{organizationId}/{userId}/{filename}
  *
- * 4. CORS CONFIGURATION:
- *    Configure CORS for your storage bucket:
+ * 4. Test multi-tenancy:
+ *    - Create two organizations
+ *    - Upload file in org A
+ *    - Attempt to read from org B (should fail)
+ *    - Verify recruiter cannot upload
  *
- *    [
- *      {
- *        "origin": ["https://your-domain.com"],
- *        "method": ["GET", "POST", "DELETE", "PUT"],
- *        "maxAgeSeconds": 3600,
- *        "responseHeader": ["Content-Type", "Content-Length"]
- *      }
- *    ]
+ * 5. Monitor violations:
+ *    - Check Firebase Console > Storage > Rules evaluation
+ *    - Set up alerting for repeated denied requests
  *
- *    Apply with: gsutil cors set cors.json gs://your-bucket-name
+ * PERFORMANCE CONSIDERATIONS:
+ * - Firestore get() calls are cached per request
+ * - getUserProfile() called once per operation
+ * - Consider server-side validation for large-scale operations
  *
- * 5. MONITORING:
- *    - Enable Firebase Storage audit logs
- *    - Monitor unusual upload patterns
- *    - Set up alerts for:
- *      * Rapid file uploads
- *      * Large storage usage
- *      * Failed authentication attempts
- *      * Suspicious file types (if validation bypassed)
+ * AUDIT LOG:
+ * - All denied requests logged in Firebase Console
+ * - Enable Storage audit logs in Google Cloud Console
+ * - Set up alerts for suspicious patterns
  *
- * 6. MALWARE SCANNING:
- *    Consider implementing virus scanning:
- *    - Cloud Functions triggered on upload
- *    - ClamAV or similar in Cloud Run
- *    - Quarantine suspicious files
- *    - Delete infected files automatically
+ * TESTING COMMANDS:
  *
- * 7. BACKUP & DISASTER RECOVERY:
- *    - Enable versioning for accidental deletes
- *    - Set up lifecycle rules for old versions
- *    - Regular backups to cold storage
- *    - Test restore procedures
+ * # Test upload from correct org (should succeed):
+ * gsutil -m cp test.pdf gs://YOUR_BUCKET/cvs/org_123/user_456/test.pdf
+ *
+ * # Test cross-org access (should fail):
+ * # User in org_789 trying to access org_123 file
+ *
+ * # Test recruiter upload (should fail):
+ * # Recruiter role attempting upload operation
+ *
+ * MIGRATION FROM OLD STRUCTURE:
+ *
+ * If migrating from /cvs/{userId}/{filename} to /cvs/{orgId}/{userId}/{filename}:
+ *
+ * 1. Create Cloud Function to migrate existing files
+ * 2. Update file paths in Firestore documents
+ * 3. Copy files to new location with proper metadata
+ * 4. Verify all files migrated successfully
+ * 5. Delete old files after verification
+ * 6. Deploy new storage rules
  */
