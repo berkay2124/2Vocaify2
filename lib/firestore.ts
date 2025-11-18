@@ -19,6 +19,7 @@ export type CVStatus = "pending" | "processing" | "indexed" | "error";
 
 export interface CVDocument {
   id?: string;
+  organizationId: string; // Multi-tenant support
   userId: string;
   storagePath: string;
   filename: string;
@@ -28,6 +29,7 @@ export interface CVDocument {
   fileType: string;
   downloadURL?: string;
   errorMessage?: string;
+  assignedRecruiters?: string[]; // For RBAC - recruiters assigned to this CV
 }
 
 /**
@@ -87,7 +89,40 @@ export async function deleteCVDocument(docId: string): Promise<void> {
 }
 
 /**
- * Get all CVs for a user
+ * Get all CVs for an organization
+ * @param organizationId - The organization's ID
+ * @param statusFilter - Optional status filter
+ * @returns Array of CV documents
+ */
+export async function getOrganizationCVs(
+  organizationId: string,
+  statusFilter?: CVStatus
+): Promise<CVDocument[]> {
+  try {
+    const constraints: QueryConstraint[] = [
+      where("organizationId", "==", organizationId),
+      orderBy("uploadedAt", "desc"),
+    ];
+
+    if (statusFilter) {
+      constraints.push(where("status", "==", statusFilter));
+    }
+
+    const q = query(collection(db, "cvs"), ...constraints);
+    const querySnapshot = await getDocs(q);
+
+    return querySnapshot.docs.map((doc) => ({
+      id: doc.id,
+      ...doc.data(),
+    })) as CVDocument[];
+  } catch (error) {
+    console.error("Error getting organization CVs:", error);
+    throw error;
+  }
+}
+
+/**
+ * Get all CVs for a user (legacy - use getOrganizationCVs for multi-tenant)
  * @param userId - The user's ID
  * @param statusFilter - Optional status filter
  * @returns Array of CV documents
@@ -120,7 +155,23 @@ export async function getUserCVs(
 }
 
 /**
- * Get CV count for a user
+ * Get CV count for an organization
+ * @param organizationId - The organization's ID
+ * @returns The count of CVs
+ */
+export async function getOrganizationCVCount(organizationId: string): Promise<number> {
+  try {
+    const q = query(collection(db, "cvs"), where("organizationId", "==", organizationId));
+    const querySnapshot = await getDocs(q);
+    return querySnapshot.size;
+  } catch (error) {
+    console.error("Error getting organization CV count:", error);
+    return 0;
+  }
+}
+
+/**
+ * Get CV count for a user (legacy)
  * @param userId - The user's ID
  * @returns The count of CVs
  */

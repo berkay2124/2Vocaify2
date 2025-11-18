@@ -1,21 +1,51 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
-// This is a client-side auth check middleware
-// For more robust server-side auth, consider using Firebase Admin SDK
+/**
+ * Multi-Tenant RBAC Middleware
+ *
+ * This middleware handles route protection for authenticated and role-based routes.
+ *
+ * RBAC Implementation:
+ * - Client-side enforcement: Pages use useAuth() hooks (isAdmin, canManageTeam, etc.)
+ * - Firestore rules: Database-level access control based on organizationId and role
+ * - Page-level guards: Each protected page checks auth/role and redirects if unauthorized
+ *
+ * Protected Routes:
+ * - /dashboard/** : All authenticated users
+ * - /settings/team : Admin only (enforced client-side)
+ * - /settings/billing : Admin only (enforced client-side)
+ *
+ * For server-side session management with Firebase Admin SDK, see:
+ * https://firebase.google.com/docs/auth/admin/manage-cookies
+ */
 export function middleware(request: NextRequest) {
-  // Define protected routes
-  const protectedRoutes = ["/dashboard"];
+  // Define protected route patterns
+  const protectedRoutes = [
+    "/dashboard",
+    "/settings",
+  ];
+
+  // Admin-only routes (enforced client-side in page components)
+  const adminOnlyRoutes = [
+    "/settings/team",
+    "/settings/billing",
+  ];
 
   const isProtectedRoute = protectedRoutes.some((route) =>
     request.nextUrl.pathname.startsWith(route)
   );
 
-  // If it's a protected route, the client-side auth check will handle redirect
-  // This middleware is mainly for additional server-side checks if needed
-  if (isProtectedRoute) {
-    // You can add additional checks here, like checking for auth cookies/tokens
-    // For now, we rely on client-side auth state management
+  const isAdminRoute = adminOnlyRoutes.some((route) =>
+    request.nextUrl.pathname.startsWith(route)
+  );
+
+  // Log route access for monitoring (in production, send to analytics)
+  if (isProtectedRoute || isAdminRoute) {
+    // Client-side auth state and role checks handle actual enforcement
+    // Firestore security rules provide database-level protection
+    // This middleware serves as route documentation and can be extended
+    // with server-side session verification using Firebase Admin SDK
   }
 
   return NextResponse.next();

@@ -11,7 +11,7 @@ import toast from "react-hot-toast";
 import Link from "next/link";
 
 export default function UploadPage() {
-  const { user } = useAuth();
+  const { user, userProfile, canUploadCVs } = useAuth();
   const router = useRouter();
   const [selectedFiles, setSelectedFiles] = useState<FileWithStatus[]>([]);
   const [isUploading, setIsUploading] = useState(false);
@@ -21,12 +21,15 @@ export default function UploadPage() {
     failed: 0,
   });
 
-  // Redirect if not authenticated
+  // Redirect if not authenticated or doesn't have upload permission
   useEffect(() => {
     if (!user) {
       router.push("/auth/login");
+    } else if (userProfile && !canUploadCVs()) {
+      toast.error("You don't have permission to upload CVs");
+      router.push("/dashboard");
     }
-  }, [user, router]);
+  }, [user, userProfile, canUploadCVs, router]);
 
   const updateFileProgress = useCallback(
     (fileId: string, progress: UploadProgress) => {
@@ -47,7 +50,7 @@ export default function UploadPage() {
   );
 
   const uploadSingleFile = async (fileWithStatus: FileWithStatus): Promise<boolean> => {
-    if (!user) return false;
+    if (!user || !userProfile?.organizationId) return false;
 
     try {
       // Upload to Storage
@@ -57,8 +60,9 @@ export default function UploadPage() {
         (progress) => updateFileProgress(fileWithStatus.id, progress)
       );
 
-      // Create Firestore document
+      // Create Firestore document with multi-tenant support
       await createCVDocument({
+        organizationId: userProfile.organizationId,
         userId: user.uid,
         storagePath,
         filename: fileWithStatus.file.name,
@@ -67,6 +71,7 @@ export default function UploadPage() {
         fileSize: fileWithStatus.file.size,
         fileType: fileWithStatus.file.type,
         downloadURL,
+        assignedRecruiters: [], // Initialize empty, can be assigned later
       });
 
       return true;

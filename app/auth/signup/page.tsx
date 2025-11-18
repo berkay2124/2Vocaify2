@@ -7,6 +7,7 @@ import Link from "next/link";
 
 export default function SignUpPage() {
   const [name, setName] = useState("");
+  const [organizationName, setOrganizationName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -21,6 +22,10 @@ export default function SignUpPage() {
 
     if (name.trim().length < 2) {
       newErrors.name = "Name must be at least 2 characters";
+    }
+
+    if (organizationName.trim().length < 2) {
+      newErrors.organizationName = "Organization name must be at least 2 characters";
     }
 
     if (!/\S+@\S+\.\S+/.test(email)) {
@@ -49,7 +54,7 @@ export default function SignUpPage() {
     setLoading(true);
 
     try {
-      await signUp(email, password, name);
+      await signUp(email, password, name, organizationName);
       router.push("/dashboard");
     } catch (error) {
       // Error handled by AuthContext
@@ -149,6 +154,31 @@ export default function SignUpPage() {
               {errors.name && (
                 <p id="name-error" className="mt-1 text-sm text-red-600" role="alert">
                   {errors.name}
+                </p>
+              )}
+            </div>
+
+            <div>
+              <label htmlFor="organization" className="block text-sm font-medium text-gray-700 mb-2">
+                Organization Name
+              </label>
+              <input
+                id="organization"
+                type="text"
+                required
+                value={organizationName}
+                onChange={(e) => setOrganizationName(e.target.value)}
+                className={`w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all ${
+                  errors.organizationName ? "border-red-500" : "border-gray-300"
+                }`}
+                placeholder="Acme Corp"
+                aria-label="Organization name"
+                aria-invalid={!!errors.organizationName}
+                aria-describedby={errors.organizationName ? "organization-error" : undefined}
+              />
+              {errors.organizationName && (
+                <p id="organization-error" className="mt-1 text-sm text-red-600" role="alert">
+                  {errors.organizationName}
                 </p>
               )}
             </div>

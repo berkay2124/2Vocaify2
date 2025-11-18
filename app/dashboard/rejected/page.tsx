@@ -24,7 +24,7 @@ interface RejectedItem {
 }
 
 export default function RejectedPage() {
-  const { user, loading: authLoading } = useAuth();
+  const { user, userProfile, loading: authLoading } = useAuth();
   const router = useRouter();
   const [rejected, setRejected] = useState<RejectedItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -39,11 +39,11 @@ export default function RejectedPage() {
   }, [user, authLoading, router]);
 
   useEffect(() => {
-    if (!user) return;
+    if (!user || !userProfile?.organizationId) return;
 
     const q = query(
       collection(db, "rejected"),
-      where("userId", "==", user.uid),
+      where("organizationId", "==", userProfile.organizationId),
       orderBy("rejectedAt", "desc")
     );
 
@@ -73,7 +73,7 @@ export default function RejectedPage() {
     );
 
     return () => unsubscribe();
-  }, [user]);
+  }, [user, userProfile]);
 
   const handleRemove = async (id: string, candidateName?: string) => {
     if (!user) return;

@@ -24,7 +24,7 @@ interface ShortlistItem {
 }
 
 export default function ShortlistPage() {
-  const { user, loading: authLoading } = useAuth();
+  const { user, userProfile, loading: authLoading } = useAuth();
   const router = useRouter();
   const [shortlist, setShortlist] = useState<ShortlistItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -39,11 +39,11 @@ export default function ShortlistPage() {
   }, [user, authLoading, router]);
 
   useEffect(() => {
-    if (!user) return;
+    if (!user || !userProfile?.organizationId) return;
 
     const q = query(
       collection(db, "shortlists"),
-      where("userId", "==", user.uid),
+      where("organizationId", "==", userProfile.organizationId),
       orderBy("addedAt", "desc")
     );
 
@@ -73,7 +73,7 @@ export default function ShortlistPage() {
     );
 
     return () => unsubscribe();
-  }, [user]);
+  }, [user, userProfile]);
 
   const handleRemove = async (id: string, candidateName: string) => {
     if (!user) return;
