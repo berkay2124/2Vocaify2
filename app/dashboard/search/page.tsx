@@ -1,24 +1,43 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import SearchBar from "@/components/SearchBar";
 import FilterPanel from "@/components/FilterPanel";
-import ResultCard from "@/components/ResultCard";
-import { Candidate } from "@/types/candidate";
-import { searchCandidates, mockCandidates } from "@/lib/mockData";
-import { SearchFilters, SortOption } from "@/types/candidate";
+import SearchLoading from "@/components/SearchLoading";
+import SearchError from "@/components/SearchError";
+import CVProcessingStatus from "@/components/CVProcessingStatus";
+import { useSearch } from "@/hooks/useSearch";
+import { VectorSearchFilters } from "@/lib/vectorSearch";
+import { SearchFilters } from "@/types/candidate";
 import toast from "react-hot-toast";
+import {
+  downloadCV,
+  addToShortlist,
+  removeFromShortlist,
+  rejectCandidate,
+  saveRecentSearch,
+} from "@/lib/api";
 
 const RESULTS_PER_PAGE = 10;
+
+// Convert SearchFilters to VectorSearchFilters
+function toVectorSearchFilters(filters: SearchFilters): VectorSearchFilters {
+  return {
+    minExperience: filters.minExperience,
+    maxExperience: filters.maxExperience,
+    skills: filters.skills,
+    location: filters.location,
+  };
+}
 
 export default function SearchPage() {
   const { user } = useAuth();
   const router = useRouter();
 
-  // State
+  // State - use old SearchFilters for compatibility with existing components
   const [query, setQuery] = useState("");
   const [filters, setFilters] = useState<SearchFilters>({
     query: "",
@@ -28,13 +47,26 @@ export default function SearchPage() {
     education: "",
     location: "",
   });
-  const [results, setResults] = useState<Candidate[]>([]);
-  const [isSearching, setIsSearching] = useState(false);
-  const [hasSearched, setHasSearched] = useState(false);
-  const [sortBy, setSortBy] = useState<SortOption>("score");
   const [currentPage, setCurrentPage] = useState(1);
   const [shortlistedIds, setShortlistedIds] = useState<Set<string>>(new Set());
   const [rejectedIds, setRejectedIds] = useState<Set<string>>(new Set());
+
+  // Use search hook
+  const {
+    results,
+    totalResults,
+    isSearching,
+    error,
+    duration,
+    reranked,
+    search,
+    clearError,
+  } = useSearch({
+    userId: user?.uid || "",
+    debounceMs: 300,
+    enableCache: true,
+    enableAnalytics: true,
+  });
 
   // Redirect if not authenticated
   useEffect(() => {
@@ -43,37 +75,23 @@ export default function SearchPage() {
     }
   }, [user, router]);
 
-  // Perform search
-  const handleSearch = useCallback((searchQuery: string, searchFilters: SearchFilters) => {
-    setIsSearching(true);
-    setHasSearched(true);
+  // Handle search
+  const handleSearch = async (searchQuery: string, searchFilters: SearchFilters) => {
+    setQuery(searchQuery);
+    setFilters(searchFilters);
+    setCurrentPage(1);
 
-    // Simulate API delay
-    setTimeout(() => {
-      const searchResults = searchCandidates(searchQuery, searchFilters);
-      setResults(searchResults);
-      setCurrentPage(1);
-      setIsSearching(false);
-    }, 800);
-  }, []);
-
-  // Sort results
-  const sortedResults = [...results].sort((a, b) => {
-    switch (sortBy) {
-      case "score":
-        return b.matchScore - a.matchScore;
-      case "experience":
-        return b.yearsOfExperience - a.yearsOfExperience;
-      case "date":
-        return b.uploadedAt.getTime() - a.uploadedAt.getTime();
-      default:
-        return 0;
+    if (searchQuery.trim()) {
+      // Convert to VectorSearchFilters for API call
+      const vectorFilters = toVectorSearchFilters(searchFilters);
+      await search(searchQuery, vectorFilters);
+      saveRecentSearch(searchQuery);
     }
-  });
+  };
 
   // Filter out rejected candidates
-  const filteredResults = sortedResults.filter(
-    (candidate) => !rejectedIds.has(candidate.id)
+  const filteredResults = results.filter(
+    (result) => !rejectedIds.has(result.id)
   );
 
   // Pagination
@@ -83,40 +101,82 @@ export default function SearchPage() {
   const paginatedResults = filteredResults.slice(startIndex, endIndex);
 
   // Action handlers
-  const handleViewCV = (candidate: Candidate) => {
-    toast.success(`Opening CV for ${candidate.name}`, {
-      icon: "📄",
-      duration: 3000,
-    });
-    // In real app: window.open(candidate.cvUrl, '_blank')
+  const handleViewCV = async (candidateId: string, candidateName: string) => {
+    try {
+      toast.loading(`Opening CV for ${candidateName}...`, { id: "view-cv" });
+      await downloadCV(candidateId);
+      toast.success(`Opened CV for ${candidateName}`, { id: "view-cv" });
+    } catch (error: any) {
+      toast.error(error.message || "Failed to open CV", { id: "view-cv" });
+    }
   };
 
-  const handleShortlist = (candidate: Candidate) => {
+  const handleShortlist = async (candidateId: string, candidateName: string) => {
+    if (!user) return;
+
+    const wasShortlisted = shortlistedIds.has(candidateId);
+
+    // Optimistic update
     setShortlistedIds((prev) => {
       const newSet = new Set(prev);
-      if (newSet.has(candidate.id)) {
-        newSet.delete(candidate.id);
-        toast.success(`${candidate.name} removed from shortlist`);
+      if (wasShortlisted) {
+        newSet.delete(candidateId);
       } else {
-        newSet.add(candidate.id);
-        toast.success(`${candidate.name} added to shortlist`, {
-          icon: "⭐",
-          duration: 3000,
-        });
+        newSet.add(candidateId);
       }
       return newSet;
     });
+
+    try {
+      if (wasShortlisted) {
+        await removeFromShortlist(user.uid, candidateId);
+        toast.success(`${candidateName} removed from shortlist`);
+      } else {
+        await addToShortlist(user.uid, candidateId, candidateName);
+        toast.success(`${candidateName} added to shortlist`, {
+          icon: "⭐",
+        });
+      }
+    } catch (error: any) {
+      // Revert optimistic update
+      setShortlistedIds((prev) => {
+        const newSet = new Set(prev);
+        if (wasShortlisted) {
+          newSet.add(candidateId);
+        } else {
+          newSet.delete(candidateId);
+        }
+        return newSet;
+      });
+
+      toast.error(error.message || "Failed to update shortlist");
+    }
   };
 
-  const handleReject = (candidate: Candidate) => {
-    setRejectedIds((prev) => new Set(prev).add(candidate.id));
-    toast.success(`${candidate.name} rejected`, {
-      icon: "❌",
-      duration: 3000,
-    });
+  const handleReject = async (candidateId: string, candidateName: string) => {
+    if (!user) return;
+
+    // Optimistic update
+    setRejectedIds((prev) => new Set(prev).add(candidateId));
+
+    try {
+      await rejectCandidate(user.uid, candidateId);
+      toast.success(`${candidateName} rejected`, { icon: "❌" });
+    } catch (error: any) {
+      // Revert optimistic update
+      setRejectedIds((prev) => {
+        const newSet = new Set(prev);
+        newSet.delete(candidateId);
+        return newSet;
+      });
+
+      toast.error(error.message || "Failed to reject candidate");
+    }
   };
 
   if (!user) return null;
+
+  const hasSearched = query.trim().length > 0;
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-white to-indigo-50">
@@ -172,24 +232,43 @@ export default function SearchPage() {
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Search Header */}
-        <div className="mb-8">
+        <div className="mb-6">
           <h1 className="text-3xl font-bold text-gray-900 mb-2">Search CVs</h1>
           <p className="text-gray-600">
             Use natural language to find the perfect candidate
           </p>
         </div>
 
+        {/* Processing Status */}
+        {user && (
+          <div className="mb-6">
+            <CVProcessingStatus userId={user.uid} />
+          </div>
+        )}
+
         {/* Search Bar */}
         <div className="mb-6">
           <SearchBar
-            onSearch={(q, f) => {
-              setQuery(q);
-              setFilters(f);
-              handleSearch(q, f);
-            }}
+            onSearch={(q, f) => handleSearch(q, f)}
             isLoading={isSearching}
           />
         </div>
+
+        {/* Error Display */}
+        {error && (
+          <div className="mb-6">
+            <SearchError
+              error={error}
+              onRetry={() => {
+                if (query) {
+                  const vectorFilters = toVectorSearchFilters(filters);
+                  search(query, vectorFilters);
+                }
+              }}
+              onDismiss={clearError}
+            />
+          </div>
+        )}
 
         {/* Filters and Results */}
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
@@ -199,7 +278,10 @@ export default function SearchPage() {
               filters={filters}
               onFiltersChange={(newFilters) => {
                 setFilters(newFilters);
-                handleSearch(query, newFilters);
+                if (query) {
+                  const vectorFilters = toVectorSearchFilters(newFilters);
+                  search(query, vectorFilters);
+                }
               }}
             />
           </div>
@@ -212,48 +294,20 @@ export default function SearchPage() {
                 <div className="text-gray-700">
                   <span className="font-semibold">{filteredResults.length}</span>{" "}
                   candidate{filteredResults.length !== 1 ? "s" : ""} found
-                </div>
-
-                {/* Sort Options */}
-                <div className="flex items-center gap-2">
-                  <span className="text-sm text-gray-600">Sort by:</span>
-                  <select
-                    value={sortBy}
-                    onChange={(e) => setSortBy(e.target.value as SortOption)}
-                    className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition-all"
-                  >
-                    <option value="score">Match Score</option>
-                    <option value="experience">Experience</option>
-                    <option value="date">Upload Date</option>
-                  </select>
+                  {reranked && (
+                    <span className="ml-2 text-sm text-indigo-600">
+                      (AI re-ranked)
+                    </span>
+                  )}
+                  <span className="ml-2 text-sm text-gray-500">
+                    in {duration}ms
+                  </span>
                 </div>
               </div>
             )}
 
             {/* Loading State */}
-            {isSearching && (
-              <div className="space-y-4">
-                {[1, 2, 3].map((i) => (
-                  <div
-                    key={i}
-                    className="bg-white rounded-xl border border-gray-200 p-6 animate-pulse"
-                  >
-                    <div className="flex items-start justify-between gap-4 mb-4">
-                      <div className="flex-1">
-                        <div className="h-6 bg-gray-200 rounded w-48 mb-2"></div>
-                        <div className="h-4 bg-gray-200 rounded w-32 mb-2"></div>
-                        <div className="h-4 bg-gray-200 rounded w-64"></div>
-                      </div>
-                      <div className="w-20 h-20 bg-gray-200 rounded-full"></div>
-                    </div>
-                    <div className="space-y-2">
-                      <div className="h-4 bg-gray-200 rounded w-full"></div>
-                      <div className="h-4 bg-gray-200 rounded w-3/4"></div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
+            {isSearching && <SearchLoading />}
 
             {/* Empty State - No Search */}
             {!hasSearched && !isSearching && (
@@ -284,10 +338,7 @@ export default function SearchPage() {
                   <button
                     onClick={() => {
                       const exampleQuery = "Senior React developer 5 years";
-                      handleSearch(exampleQuery, {
-                        ...filters,
-                        query: exampleQuery,
-                      });
+                      handleSearch(exampleQuery, filters);
                     }}
                     className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm rounded-lg transition-colors"
                   >
@@ -296,10 +347,7 @@ export default function SearchPage() {
                   <button
                     onClick={() => {
                       const exampleQuery = "Python ML engineer";
-                      handleSearch(exampleQuery, {
-                        ...filters,
-                        query: exampleQuery,
-                      });
+                      handleSearch(exampleQuery, filters);
                     }}
                     className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm rounded-lg transition-colors"
                   >
@@ -310,7 +358,7 @@ export default function SearchPage() {
             )}
 
             {/* Empty State - No Results */}
-            {hasSearched && !isSearching && filteredResults.length === 0 && (
+            {hasSearched && !isSearching && filteredResults.length === 0 && !error && (
               <div className="bg-white rounded-xl border border-gray-200 p-12 text-center">
                 <div className="inline-flex items-center justify-center w-20 h-20 mb-4 rounded-full bg-gray-100">
                   <svg
@@ -336,7 +384,7 @@ export default function SearchPage() {
                 <div className="space-y-2 text-sm text-gray-600 mb-6">
                   <p>💡 Tips for better results:</p>
                   <ul className="list-disc list-inside space-y-1 text-left max-w-md mx-auto">
-                    <li>Use broader skill keywords (e.g., &quot;JavaScript&quot; instead of &quot;Next.js&quot;)</li>
+                    <li>Use broader skill keywords</li>
                     <li>Reduce experience requirements</li>
                     <li>Clear some filters to expand your search</li>
                   </ul>
@@ -352,7 +400,6 @@ export default function SearchPage() {
                       location: "",
                     });
                     setQuery("");
-                    setHasSearched(false);
                   }}
                   className="px-6 py-3 bg-primary hover:bg-primary-700 text-white font-semibold rounded-lg transition-all"
                 >
@@ -364,15 +411,170 @@ export default function SearchPage() {
             {/* Results List */}
             {!isSearching && paginatedResults.length > 0 && (
               <div className="space-y-4">
-                {paginatedResults.map((candidate) => (
-                  <ResultCard
-                    key={candidate.id}
-                    candidate={candidate}
-                    onViewCV={handleViewCV}
-                    onShortlist={handleShortlist}
-                    onReject={handleReject}
-                  />
-                ))}
+                {paginatedResults.map((result) => {
+                  const candidate = result.metadata;
+                  const matchScore = result.rerankScore
+                    ? Math.round(result.rerankScore)
+                    : Math.round(result.score * 100);
+
+                  return (
+                    <div
+                      key={result.id}
+                      className="bg-white rounded-xl border border-gray-200 p-6 hover:shadow-lg transition-shadow"
+                    >
+                      <div className="flex items-start justify-between gap-4 mb-4">
+                        <div className="flex-1">
+                          <h3 className="text-xl font-bold text-gray-900 mb-1">
+                            {candidate.name}
+                          </h3>
+                          <div className="flex items-center gap-3 text-sm text-gray-600 mb-2">
+                            <span>{candidate.yearsExperience} years exp</span>
+                            <span>•</span>
+                            <span>{candidate.location || "Location not specified"}</span>
+                          </div>
+                        </div>
+
+                        {/* Match Score */}
+                        <div className="relative w-20 h-20 flex-shrink-0">
+                          <svg className="transform -rotate-90 w-20 h-20">
+                            <circle
+                              cx="40"
+                              cy="40"
+                              r="34"
+                              stroke="currentColor"
+                              strokeWidth="6"
+                              fill="transparent"
+                              className="text-gray-200"
+                            />
+                            <circle
+                              cx="40"
+                              cy="40"
+                              r="34"
+                              stroke="currentColor"
+                              strokeWidth="6"
+                              fill="transparent"
+                              strokeDasharray={`${2 * Math.PI * 34}`}
+                              strokeDashoffset={`${
+                                2 * Math.PI * 34 * (1 - matchScore / 100)
+                              }`}
+                              className={
+                                matchScore >= 85
+                                  ? "text-green-500"
+                                  : matchScore >= 70
+                                  ? "text-blue-500"
+                                  : "text-yellow-500"
+                              }
+                              strokeLinecap="round"
+                            />
+                          </svg>
+                          <div className="absolute inset-0 flex items-center justify-center">
+                            <span className="text-2xl font-bold">{matchScore}</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Skills */}
+                      <div className="flex flex-wrap gap-2 mb-4">
+                        {candidate.skills.slice(0, 8).map((skill, idx) => (
+                          <span
+                            key={idx}
+                            className="px-3 py-1 bg-gray-100 text-gray-700 text-sm rounded-full"
+                          >
+                            {skill}
+                          </span>
+                        ))}
+                        {candidate.skills.length > 8 && (
+                          <span className="px-3 py-1 bg-gray-200 text-gray-600 text-sm rounded-full font-medium">
+                            +{candidate.skills.length - 8} more
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Why Matched (AI Reasoning) */}
+                      {result.rerankReasoning && (
+                        <div className="mb-4 p-4 bg-blue-50 border-l-4 border-blue-500 rounded">
+                          <p className="text-sm font-semibold text-blue-900 mb-1">
+                            Why matched:
+                          </p>
+                          <p className="text-sm text-blue-800">{result.rerankReasoning}</p>
+                        </div>
+                      )}
+
+                      {/* Action Buttons */}
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => handleViewCV(result.id, candidate.name)}
+                          className="flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary-700 text-white rounded-lg transition-colors"
+                        >
+                          <svg
+                            className="w-4 h-4"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth={2}
+                              d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+                            />
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth={2}
+                              d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"
+                            />
+                          </svg>
+                          View CV
+                        </button>
+
+                        <button
+                          onClick={() => handleShortlist(result.id, candidate.name)}
+                          className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
+                            shortlistedIds.has(result.id)
+                              ? "bg-yellow-500 hover:bg-yellow-600 text-white"
+                              : "bg-gray-100 hover:bg-gray-200 text-gray-700"
+                          }`}
+                        >
+                          <svg
+                            className="w-4 h-4"
+                            fill={shortlistedIds.has(result.id) ? "currentColor" : "none"}
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth={2}
+                              d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"
+                            />
+                          </svg>
+                          {shortlistedIds.has(result.id) ? "Shortlisted" : "Shortlist"}
+                        </button>
+
+                        <button
+                          onClick={() => handleReject(result.id, candidate.name)}
+                          className="flex items-center gap-2 px-4 py-2 bg-red-100 hover:bg-red-200 text-red-700 rounded-lg transition-colors"
+                        >
+                          <svg
+                            className="w-4 h-4"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth={2}
+                              d="M6 18L18 6M6 6l12 12"
+                            />
+                          </svg>
+                          Reject
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             )}
 
