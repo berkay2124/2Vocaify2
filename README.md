@@ -285,6 +285,230 @@ await createCVDocument({
 - Invalid file types (only PDF and DOCX allowed)
 - Memory management (no file content stored in state)
 
+## Cloud Functions & AI Processing
+
+Vocaify includes a comprehensive backend system that automatically processes CVs using OpenAI:
+
+### Architecture
+
+When a CV is uploaded to Firebase Storage, a Cloud Function automatically:
+1. Extracts text from PDF/DOCX files
+2. Sends text to OpenAI (GPT-4o-mini) for structured data extraction
+3. Stores extracted data in Firestore with status tracking
+4. Handles errors with automatic retry logic
+
+### Features
+
+**Automatic CV Processing:**
+- Triggered automatically on file upload
+- Supports PDF, DOCX, and DOC formats
+- Maximum file size: 10MB per CV
+- Extracts structured data: name, email, phone, skills, experience, education
+
+**AI-Powered Extraction:**
+- Uses OpenAI GPT-4o-mini for cost-effective processing
+- Extracts 10+ data fields from CVs
+- Calculates years of experience automatically
+- Generates professional summaries
+
+**Robust Error Handling:**
+- Automatic retry logic (3 attempts with exponential backoff)
+- Detailed error logging to Firestore
+- Status tracking: pending → processing → indexed/error
+- Scheduled function to reprocess stuck CVs
+
+**Cost Optimization:**
+- Uses GPT-4o-mini (~$0.15 per 1M input tokens)
+- Token usage logging for cost monitoring
+- Batch processing with concurrency control
+- Estimated cost: $0.001-0.003 per CV
+
+### Setup Instructions
+
+**1. Install Firebase CLI**
+
+```bash
+npm install -g firebase-tools
+firebase login
+```
+
+**2. Install Functions Dependencies**
+
+```bash
+cd functions
+npm install
+cd ..
+```
+
+**3. Configure OpenAI API Key**
+
+Get your OpenAI API key from [platform.openai.com/api-keys](https://platform.openai.com/api-keys)
+
+Set the API key in Firebase config:
+
+```bash
+firebase functions:config:set openai.key="YOUR_OPENAI_API_KEY"
+```
+
+Verify configuration:
+
+```bash
+firebase functions:config:get
+```
+
+**4. Deploy Cloud Functions**
+
+```bash
+firebase deploy --only functions
+```
+
+Or deploy specific functions:
+
+```bash
+firebase deploy --only functions:onCVUpload
+firebase deploy --only functions:reprocessCV
+firebase deploy --only functions:processStuckCVs
+```
+
+**5. Test Locally with Emulators**
+
+```bash
+# Start emulators
+firebase emulators:start
+
+# In another terminal, set local config
+cd functions
+echo '{"openai":{"key":"YOUR_OPENAI_API_KEY"}}' > .runtimeconfig.json
+cd ..
+```
+
+### Available Cloud Functions
+
+**1. onCVUpload (Storage Trigger)**
+- Automatically triggered when CV is uploaded
+- Path: `gs://YOUR_BUCKET/cvs/{userId}/{filename}`
+- Timeout: 9 minutes
+- Memory: 1GB
+
+**2. reprocessCV (Callable)**
+- Manually reprocess a failed CV
+- Authentication required
+- Usage from frontend:
+```typescript
+const reprocess = httpsCallable(functions, 'reprocessCV');
+await reprocess({ cvId: 'DOCUMENT_ID' });
+```
+
+**3. processStuckCVs (Scheduled)**
+- Runs every 60 minutes
+- Finds CVs stuck in "processing" for >30 minutes
+- Automatically reprocesses them
+- Limit: 50 CVs per run
+
+**4. getProcessingStats (HTTP)**
+- GET endpoint for processing statistics
+- Returns counts for each status
+- No authentication required
+- URL: `https://YOUR_REGION-YOUR_PROJECT.cloudfunctions.net/getProcessingStats`
+
+### Monitoring & Debugging
+
+**View Logs:**
+
+```bash
+# Real-time logs
+firebase functions:log --follow
+
+# Filter by function
+firebase functions:log --only onCVUpload
+
+# View errors only
+firebase functions:log --only-errors
+```
+
+**Check Processing Status in Firestore:**
+
+The `cvs` collection documents include:
+```typescript
+{
+  status: "pending" | "processing" | "indexed" | "error"
+  processingStartedAt: Timestamp
+  processedAt: Timestamp
+  extractedData: {
+    name, email, phone, yearsExperience,
+    skills[], education[], workHistory[], summary
+  }
+  extractedText: string // First 5000 chars
+  errorMessage?: string
+}
+```
+
+**Monitor Costs:**
+
+Check function logs for token usage:
+```bash
+firebase functions:log | grep "OpenAI API call completed"
+```
+
+Estimated costs:
+- Average CV: 2000-4000 prompt tokens, 500-800 completion tokens
+- Cost per CV: ~$0.001-0.003
+- 1000 CVs: ~$1-3
+
+### File Structure
+
+```
+functions/
+├── src/
+│   ├── index.ts           # Main Cloud Functions exports
+│   ├── processCv.ts       # CV processing pipeline with retry logic
+│   ├── extractText.ts     # PDF and DOCX text extraction
+│   └── openai.ts          # OpenAI integration for data extraction
+├── package.json           # Dependencies (firebase-admin, openai, pdf-parse, mammoth)
+├── tsconfig.json          # TypeScript configuration
+└── .eslintrc.js          # ESLint rules
+```
+
+### Security Considerations
+
+- OpenAI API key stored in Firebase Functions config (never client-side)
+- User authentication verified before manual reprocessing
+- Firestore security rules enforce user ownership
+- Storage rules limit file size and type
+- Rate limiting handled by OpenAI SDK
+- Sensitive data logged at appropriate levels
+
+### Troubleshooting
+
+**"OpenAI API key not configured" error:**
+```bash
+firebase functions:config:set openai.key="YOUR_KEY"
+firebase deploy --only functions
+```
+
+**CVs stuck in "processing" status:**
+- Wait for `processStuckCVs` function (runs hourly)
+- Or manually trigger: `firebase functions:call reprocessCV --data '{"cvId":"DOC_ID"}'`
+
+**"Rate limit exceeded" error:**
+- OpenAI free tier: 3 RPM (requests per minute)
+- Paid tier: 3500 RPM
+- Function automatically retries after delay
+
+**Local testing issues:**
+- Ensure `.runtimeconfig.json` exists in `functions/` folder
+- Restart emulators after config changes
+- Check emulator UI: http://localhost:4000
+
+### Next Steps
+
+After deploying Cloud Functions:
+1. Upload test CVs through the dashboard
+2. Monitor processing in Firestore console
+3. Check function logs for any errors
+4. View extracted data in CV documents
+5. Test search functionality with processed CVs
+
 ## Design Highlights
 
 ### Color Scheme
