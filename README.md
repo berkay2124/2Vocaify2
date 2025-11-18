@@ -869,25 +869,301 @@ Create new files in the `app/` directory following Next.js App Router convention
 
 ## Production Deployment
 
-### Build for Production
+Vocaify includes a complete CI/CD pipeline with GitHub Actions and Firebase Hosting.
+
+### Prerequisites
+
+1. Firebase CLI installed: `npm install -g firebase-tools`
+2. Firebase project created with Blaze (pay-as-you-go) plan
+3. GitHub repository set up
+
+### Initial Setup
+
+**1. Initialize Firebase Hosting**
 
 ```bash
+firebase login
+firebase init hosting
+```
+
+Select:
+- Use existing project
+- Public directory: `out`
+- Single-page app: No
+- GitHub Actions: Yes
+
+**2. Set up Firebase CLI Token**
+
+```bash
+firebase login:ci
+```
+
+Copy the token and add it to GitHub Secrets:
+- Go to your repo → Settings → Secrets and variables → Actions
+- Add secret: `FIREBASE_TOKEN` with the token value
+
+**3. Configure Environment Variables**
+
+Create `.env.production` from `.env.production.example`:
+
+```bash
+cp .env.production.example .env.production
+# Edit .env.production with production values
+```
+
+Add production environment variables to GitHub Secrets:
+- `NEXT_PUBLIC_FIREBASE_API_KEY`
+- `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN`
+- `NEXT_PUBLIC_FIREBASE_PROJECT_ID`
+- `NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET`
+- `NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID`
+- `NEXT_PUBLIC_FIREBASE_APP_ID`
+- `OPENAI_API_KEY` (for Cloud Functions)
+- `PINECONE_API_KEY` (for Cloud Functions)
+
+**4. Deploy Cloud Functions**
+
+```bash
+# Configure Cloud Functions secrets
+firebase functions:config:set \
+  openai.key="YOUR_OPENAI_KEY" \
+  pinecone.key="YOUR_PINECONE_KEY" \
+  pinecone.environment="us-east-1-aws" \
+  pinecone.index="vocaify-cvs-prod"
+
+# Deploy functions
+firebase deploy --only functions
+```
+
+**5. Configure CORS for Storage**
+
+```bash
+gsutil cors set cors.json gs://YOUR_PROJECT_ID.appspot.com
+```
+
+**6. Deploy Security Rules**
+
+```bash
+firebase deploy --only firestore:rules,storage:rules
+```
+
+### Automatic Deployment
+
+The project includes a GitHub Actions workflow (`.github/workflows/deploy.yml`) that:
+
+**On Pull Request:**
+- Runs ESLint
+- Runs TypeScript type checking
+- Builds the application
+- Deploys preview to Firebase Hosting (7-day expiration)
+- Runs security scans (npm audit, TruffleHog)
+
+**On Push to Main:**
+- Runs all checks above
+- Deploys functions to Firebase
+- Deploys hosting to Firebase
+- Production deployment
+
+**Workflow Jobs:**
+1. **lint-and-test**: Code quality checks
+2. **deploy-functions**: Deploy Cloud Functions
+3. **deploy-hosting**: Build and deploy Next.js app
+4. **preview-deploy**: Create preview for PRs
+5. **security-scan**: Scan for vulnerabilities
+
+### Manual Deployment
+
+**Deploy Everything:**
+```bash
+npm run build
+firebase deploy
+```
+
+**Deploy Specific Services:**
+```bash
+firebase deploy --only hosting      # Frontend only
+firebase deploy --only functions    # Backend only
+firebase deploy --only firestore    # Security rules only
+```
+
+### Custom Domain Setup
+
+1. Go to Firebase Console → Hosting → Add custom domain
+2. Follow verification steps
+3. Firebase automatically provisions SSL certificate
+4. Update `.env.production`:
+   ```env
+   NEXT_PUBLIC_APP_URL=https://vocaify.com
+   ```
+5. Update `cors.json` with production domain
+6. Redeploy: `firebase deploy`
+
+### Monitoring & Analytics
+
+**Firebase Console:**
+- Performance monitoring: `console.firebase.google.com/project/YOUR_PROJECT/performance`
+- Function logs: `console.firebase.google.com/project/YOUR_PROJECT/functions`
+- Usage analytics: `console.firebase.google.com/project/YOUR_PROJECT/analytics`
+
+**Command Line Monitoring:**
+```bash
+# Real-time function logs
+firebase functions:log --follow
+
+# View recent errors
+firebase functions:log --only-errors
+
+# Check hosting status
+firebase hosting:channel:list
+```
+
+**Health Checks:**
+```bash
+# API health
+curl https://YOUR_DOMAIN/api/search
+
+# Functions health
+curl https://YOUR_REGION-YOUR_PROJECT.cloudfunctions.net/getProcessingStats
+```
+
+### Rollback
+
+**Hosting Rollback:**
+```bash
+# List versions
+firebase hosting:clone YOUR_PROJECT:current YOUR_PROJECT:VERSION_ID
+
+# Or via console
+# Firebase Console → Hosting → Release History → Rollback
+```
+
+**Functions Rollback:**
+```bash
+# Redeploy previous version from git
+git checkout PREVIOUS_COMMIT
+firebase deploy --only functions
+git checkout main
+```
+
+### Performance Optimization
+
+**1. Enable Caching:**
+- Static assets cached for 1 year (configured in `firebase.json`)
+- Search results cached client-side (5 min TTL)
+- CV metadata cached (10 min TTL)
+
+**2. Image Optimization:**
+- Use `next/image` for automatic optimization
+- Configured domains in `next.config.mjs`
+- Supports AVIF and WebP formats
+
+**3. Bundle Analysis:**
+```bash
+npm install -g @next/bundle-analyzer
+ANALYZE=true npm run build
+```
+
+**4. Lighthouse Score:**
+```bash
+npm install -g lighthouse
+lighthouse https://YOUR_DOMAIN --view
+```
+
+Target scores:
+- Performance: >90
+- Accessibility: >95
+- Best Practices: >95
+- SEO: >95
+
+### Security Checklist
+
+- [x] HTTPS enforced (Firebase Hosting)
+- [x] Security headers configured (next.config.mjs, firebase.json)
+- [x] CORS configured (cors.json)
+- [x] Firestore security rules deployed
+- [x] Storage security rules deployed
+- [x] Environment variables secured (GitHub Secrets)
+- [x] API keys not exposed client-side
+- [x] XSS prevention headers
+- [x] CSRF protection
+- [x] Rate limiting (TODO: implement in Cloud Functions)
+
+### Cost Monitoring
+
+**Firebase Pricing Calculator:**
+https://firebase.google.com/pricing
+
+**Expected Costs (per month):**
+- Hosting: Free tier (10GB storage, 360MB/day transfer)
+- Firestore: ~$0.06 per 100K reads ($0.60 for 1M reads)
+- Storage: ~$0.026 per GB stored
+- Functions: Free tier (2M invocations/month)
+- OpenAI: ~$2-3 for 1000 CVs
+- Pinecone: Free tier (100K vectors)
+
+**Total for 1000 CVs + 1000 searches:** ~$3-5/month
+
+**Monitor Costs:**
+```bash
+# Firebase usage
+firebase projects:list
+
+# OpenAI usage
+# Check dashboard: platform.openai.com/usage
+
+# Pinecone usage
+# Check dashboard: app.pinecone.io/usage
+```
+
+### Troubleshooting Deployment
+
+**Build Fails:**
+```bash
+# Clear cache
+rm -rf .next node_modules
+npm install
 npm run build
 ```
 
-### Deploy to Vercel (Recommended)
+**Functions Deploy Fails:**
+```bash
+# Check quota limits
+firebase functions:config:get
 
-The easiest way to deploy is using [Vercel](https://vercel.com):
+# Verify billing enabled
+# Firebase Console → Settings → Usage and billing
+```
 
-1. Push your code to GitHub
-2. Import your repository on Vercel
-3. Vercel will automatically detect Next.js and configure the build
-4. Deploy!
+**Hosting Deploy Fails:**
+```bash
+# Check firebase.json configuration
+# Ensure 'out' directory exists
+npm run build
+ls -la out/
 
-### Other Platforms
+# Manual deploy
+firebase deploy --only hosting --debug
+```
 
-- **Netlify**: Configure build command as `npm run build` and publish directory as `.next`
-- **AWS/GCP/Azure**: Use the standalone output mode in `next.config.mjs`
+**CORS Errors:**
+```bash
+# Verify CORS configuration
+gsutil cors get gs://YOUR_PROJECT_ID.appspot.com
+
+# Reapply CORS
+gsutil cors set cors.json gs://YOUR_PROJECT_ID.appspot.com
+```
+
+### Alternative Deployment (Vercel)
+
+If you prefer Vercel over Firebase Hosting:
+
+1. Push to GitHub
+2. Import on Vercel
+3. Add environment variables in Vercel dashboard
+4. Deploy automatically
+
+Note: You'll still need Firebase for backend services (Auth, Firestore, Storage, Functions)
 
 ## Performance Optimizations
 

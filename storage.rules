@@ -1,25 +1,51 @@
 rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
+
+    // Helper functions for validation
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isValidFileSize(size) {
+      // Minimum 100 bytes, maximum 10MB
+      return size >= 100 && size < 10 * 1024 * 1024;
+    }
+
+    function isValidContentType(contentType) {
+      return contentType in [
+        'application/pdf',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'application/msword'
+      ];
+    }
+
+    function hasValidMetadata() {
+      // Ensure no malicious metadata
+      return !request.resource.metadata.keys().hasAny(['__proto__', 'constructor', 'prototype']);
+    }
+
     // CVs folder structure: cvs/{userId}/{filename}
     match /cvs/{userId}/{filename} {
       // Allow read if the user owns the file
-      allow read: if request.auth != null && request.auth.uid == userId;
+      allow read: if isOwner(userId);
 
-      // Allow write (create/update) if:
-      // 1. User is authenticated
-      // 2. User owns this folder (userId matches auth uid)
-      // 3. File size is under 10MB
-      // 4. File type is PDF or DOCX
-      allow write: if request.auth != null &&
-                      request.auth.uid == userId &&
-                      request.resource.size < 10 * 1024 * 1024 &&
-                      (request.resource.contentType == 'application/pdf' ||
-                       request.resource.contentType == 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
-                       request.resource.contentType == 'application/msword');
+      // Allow write (create/update) with strict validation
+      allow write: if isOwner(userId) &&
+                      isValidFileSize(request.resource.size) &&
+                      isValidContentType(request.resource.contentType) &&
+                      hasValidMetadata() &&
+                      // Filename validation: no path traversal
+                      !filename.matches('.*[/\\\\].*') &&
+                      // Filename length: 1-255 characters
+                      filename.size() >= 1 && filename.size() <= 255;
 
       // Allow delete if the user owns the file
-      allow delete: if request.auth != null && request.auth.uid == userId;
+      allow delete: if isOwner(userId);
     }
 
     // Deny all other access
@@ -28,3 +54,64 @@ service firebase.storage {
     }
   }
 }
+
+/**
+ * PRODUCTION SECURITY NOTES:
+ *
+ * 1. RATE LIMITING:
+ *    Firebase Storage rules don't support rate limiting directly.
+ *    Implement rate limiting at the application level using:
+ *    - Cloud Functions with Firestore counters
+ *    - Firebase App Check to prevent abuse
+ *    - Cloud Armor (if using Cloud CDN)
+ *
+ * 2. USER QUOTAS:
+ *    Enforce storage quotas per user in your application:
+ *    - Track total storage per user in Firestore
+ *    - Check quota before allowing uploads
+ *    - Implement cleanup for abandoned uploads
+ *
+ * 3. FILE VALIDATION:
+ *    These rules validate:
+ *    ✓ File size (100 bytes - 10MB)
+ *    ✓ Content type (PDF, DOCX, DOC only)
+ *    ✓ Filename (no path traversal, length limits)
+ *    ✓ Metadata (no prototype pollution)
+ *    ✓ User ownership
+ *
+ * 4. CORS CONFIGURATION:
+ *    Configure CORS for your storage bucket:
+ *
+ *    [
+ *      {
+ *        "origin": ["https://your-domain.com"],
+ *        "method": ["GET", "POST", "DELETE", "PUT"],
+ *        "maxAgeSeconds": 3600,
+ *        "responseHeader": ["Content-Type", "Content-Length"]
+ *      }
+ *    ]
+ *
+ *    Apply with: gsutil cors set cors.json gs://your-bucket-name
+ *
+ * 5. MONITORING:
+ *    - Enable Firebase Storage audit logs
+ *    - Monitor unusual upload patterns
+ *    - Set up alerts for:
+ *      * Rapid file uploads
+ *      * Large storage usage
+ *      * Failed authentication attempts
+ *      * Suspicious file types (if validation bypassed)
+ *
+ * 6. MALWARE SCANNING:
+ *    Consider implementing virus scanning:
+ *    - Cloud Functions triggered on upload
+ *    - ClamAV or similar in Cloud Run
+ *    - Quarantine suspicious files
+ *    - Delete infected files automatically
+ *
+ * 7. BACKUP & DISASTER RECOVERY:
+ *    - Enable versioning for accidental deletes
+ *    - Set up lifecycle rules for old versions
+ *    - Regular backups to cold storage
+ *    - Test restore procedures
+ */

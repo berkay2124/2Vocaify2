@@ -1,0 +1,24 @@
+[
+  {
+    "origin": ["https://vocaify.com", "https://www.vocaify.com"],
+    "method": ["GET", "POST", "PUT", "DELETE"],
+    "maxAgeSeconds": 3600,
+    "responseHeader": [
+      "Content-Type",
+      "Content-Length",
+      "Content-Disposition",
+      "X-Requested-With"
+    ]
+  },
+  {
+    "origin": ["http://localhost:3000", "http://127.0.0.1:3000"],
+    "method": ["GET", "POST", "PUT", "DELETE"],
+    "maxAgeSeconds": 3600,
+    "responseHeader": [
+      "Content-Type",
+      "Content-Length",
+      "Content-Disposition",
+      "X-Requested-With"
+    ]
+  }
+]

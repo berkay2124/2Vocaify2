@@ -1,26 +1,174 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // CVs collection - users can only read/write their own CVs
+
+    // Helper functions for validation
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isValidString(field, minLen, maxLen) {
+      return field is string &&
+             field.size() >= minLen &&
+             field.size() <= maxLen;
+    }
+
+    function isValidStatus(status) {
+      return status in ['pending', 'processing', 'indexed', 'error'];
+    }
+
+    function isValidFileType(type) {
+      return type in [
+        'application/pdf',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'application/msword'
+      ];
+    }
+
+    // CVs collection - strict validation
     match /cvs/{cvId} {
       // Allow read if the user owns the CV
-      allow read: if request.auth != null &&
-                     resource.data.userId == request.auth.uid;
+      allow read: if isOwner(resource.data.userId);
 
-      // Allow create if the user is authenticated and sets themselves as the owner
-      allow create: if request.auth != null &&
+      // Allow create with strict validation
+      allow create: if isAuthenticated() &&
                        request.resource.data.userId == request.auth.uid &&
-                       request.resource.data.keys().hasAll(['userId', 'storagePath', 'filename', 'uploadedAt', 'status', 'fileSize', 'fileType']);
+                       // Required fields
+                       request.resource.data.keys().hasAll([
+                         'userId', 'storagePath', 'filename',
+                         'uploadedAt', 'status', 'fileSize', 'fileType'
+                       ]) &&
+                       // Field validation
+                       isValidString(request.resource.data.filename, 1, 255) &&
+                       isValidString(request.resource.data.storagePath, 1, 1024) &&
+                       isValidStatus(request.resource.data.status) &&
+                       isValidFileType(request.resource.data.fileType) &&
+                       // File size: 100 bytes - 10MB
+                       request.resource.data.fileSize is int &&
+                       request.resource.data.fileSize >= 100 &&
+                       request.resource.data.fileSize <= 10485760 &&
+                       // Timestamp validation
+                       request.resource.data.uploadedAt is timestamp;
 
-      // Allow update if the user owns the CV
-      // Only allow updating specific fields (prevent changing userId)
-      allow update: if request.auth != null &&
-                       resource.data.userId == request.auth.uid &&
-                       request.resource.data.userId == resource.data.userId;
+      // Allow update - only specific fields, prevent userId changes
+      allow update: if isOwner(resource.data.userId) &&
+                       request.resource.data.userId == resource.data.userId &&
+                       // Prevent changing immutable fields
+                       request.resource.data.storagePath == resource.data.storagePath &&
+                       request.resource.data.uploadedAt == resource.data.uploadedAt &&
+                       request.resource.data.fileSize == resource.data.fileSize &&
+                       // Validate status if changed
+                       (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['status']) ||
+                        isValidStatus(request.resource.data.status));
 
       // Allow delete if the user owns the CV
-      allow delete: if request.auth != null &&
-                       resource.data.userId == request.auth.uid;
+      allow delete: if isOwner(resource.data.userId);
+    }
+
+    // Shortlists collection
+    match /shortlists/{shortlistId} {
+      allow read: if isOwner(resource.data.userId);
+
+      allow create: if isAuthenticated() &&
+                       request.resource.data.userId == request.auth.uid &&
+                       request.resource.data.keys().hasAll([
+                         'userId', 'cvId', 'candidateName', 'addedAt'
+                       ]) &&
+                       isValidString(request.resource.data.cvId, 1, 255) &&
+                       isValidString(request.resource.data.candidateName, 1, 255) &&
+                       request.resource.data.addedAt is timestamp &&
+                       // Optional notes field
+                       (!request.resource.data.keys().hasAny(['notes']) ||
+                        isValidString(request.resource.data.notes, 0, 1000));
+
+      allow update: if isOwner(resource.data.userId) &&
+                       request.resource.data.userId == resource.data.userId &&
+                       // Can only update notes field
+                       request.resource.data.diff(resource.data).affectedKeys().hasOnly(['notes', 'updatedAt']) &&
+                       (!request.resource.data.keys().hasAny(['notes']) ||
+                        isValidString(request.resource.data.notes, 0, 1000));
+
+      allow delete: if isOwner(resource.data.userId);
+    }
+
+    // Rejected candidates collection
+    match /rejected/{rejectionId} {
+      allow read: if isOwner(resource.data.userId);
+
+      allow create: if isAuthenticated() &&
+                       request.resource.data.userId == request.auth.uid &&
+                       request.resource.data.keys().hasAll([
+                         'userId', 'cvId', 'rejectedAt'
+                       ]) &&
+                       isValidString(request.resource.data.cvId, 1, 255) &&
+                       request.resource.data.rejectedAt is timestamp &&
+                       // Optional reason field
+                       (!request.resource.data.keys().hasAny(['reason']) ||
+                        isValidString(request.resource.data.reason, 0, 500));
+
+      allow delete: if isOwner(resource.data.userId);
+    }
+
+    // Search analytics collection
+    match /searchAnalytics/{analyticsId} {
+      // Users can only read their own analytics
+      allow read: if isOwner(resource.data.userId);
+
+      // Allow create with validation
+      allow create: if isAuthenticated() &&
+                       request.resource.data.userId == request.auth.uid &&
+                       request.resource.data.keys().hasAll([
+                         'userId', 'query', 'timestamp'
+                       ]) &&
+                       isValidString(request.resource.data.query, 1, 1000) &&
+                       request.resource.data.timestamp is timestamp &&
+                       // Validate optional fields
+                       (!request.resource.data.keys().hasAny(['resultCount']) ||
+                        (request.resource.data.resultCount is int &&
+                         request.resource.data.resultCount >= 0)) &&
+                       (!request.resource.data.keys().hasAny(['duration']) ||
+                        (request.resource.data.duration is int &&
+                         request.resource.data.duration >= 0));
+
+      // No updates or deletes allowed for analytics
+      allow update, delete: if false;
+    }
+
+    // Recent searches collection
+    match /recentSearches/{userId} {
+      allow read: if isOwner(userId);
+
+      allow create, update: if isOwner(userId) &&
+                               request.resource.data.keys().hasAll([
+                                 'userId', 'searches', 'updatedAt'
+                               ]) &&
+                               request.resource.data.userId == request.auth.uid &&
+                               request.resource.data.searches is list &&
+                               request.resource.data.searches.size() <= 10 &&
+                               request.resource.data.updatedAt is timestamp;
+
+      allow delete: if isOwner(userId);
+    }
+
+    // User profiles collection (optional, for future use)
+    match /users/{userId} {
+      allow read: if isOwner(userId);
+
+      allow create, update: if isOwner(userId) &&
+                               request.resource.data.keys().hasAll(['userId']) &&
+                               request.resource.data.userId == request.auth.uid &&
+                               // Email validation
+                               (!request.resource.data.keys().hasAny(['email']) ||
+                                isValidString(request.resource.data.email, 3, 255)) &&
+                               // Display name validation
+                               (!request.resource.data.keys().hasAny(['displayName']) ||
+                                isValidString(request.resource.data.displayName, 1, 100));
+
+      allow delete: if isOwner(userId);
     }
 
     // Deny all other access
